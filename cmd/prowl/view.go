@@ -103,6 +103,31 @@ func (it item) meta() string {
 	return s
 }
 
+// navActions builds the footer hints for the current selection + launch context, so a key
+// only shows when it actually does something here.
+func (m model) navActions() string {
+	var a []string
+	it, ok := m.sel()
+	switch {
+	case ok && it.kind == "open":
+		a = append(a, "↵ jump")
+		if m.source > 0 {
+			a = append(a, "m move here")
+		}
+		a = append(a, "x close", "r rename")
+	case ok: // project
+		a = append(a, "↵ open")
+	}
+	if m.source > 0 {
+		a = append(a, "M new-tab", "W new-win")
+	}
+	if m.cwd != "" {
+		a = append(a, ". relayout")
+	}
+	a = append(a, "/ search", "q quit")
+	return strings.Join(a, " · ")
+}
+
 // windowRange returns the [start,end) slice of n items to show in h rows, centring cur.
 func windowRange(cur, n, h int) (int, int) {
 	if h >= n {
@@ -190,11 +215,11 @@ func (m model) View() string {
 			dim.Render(fmt.Sprintf("   %d match", len(m.view)))
 		footer = dim.Render("↵ go · ^s move · ^x kill · ^r rename · ^d prune · esc")
 	default: // nav (vim)
-		prompt = promptSt.Render("prowl") + dim.Render("   j/k nav · l open · / search")
+		prompt = promptSt.Render("prowl") + dim.Render("   j/k nav · / search")
 		if m.status != "" {
 			prompt += dim.Render("   ") + statusSt.Render(m.status)
 		}
-		footer = dim.Render("l open · . relayout · m move (M new tab · W new win) · x close · r rename · q quit")
+		footer = dim.Render(trunc(m.navActions(), innerW)) // context-aware; trunc so it never wraps the frame
 	}
 
 	// list column
