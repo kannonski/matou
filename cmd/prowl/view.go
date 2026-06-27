@@ -19,7 +19,6 @@ var (
 	metaSt   = fg("#7f849c")            // overlay1 — inline cmd/git
 	dirSt    = fg("#a6adc8")            // subtext0 — project names
 	openSt   = fg("#89b4fa")            // blue — open tab names
-	relaySt  = fg("#cba6f7")            // mauve — relay / move targets
 	focG     = fg("#a6e3a1")            // green
 	runG     = fg("#fab387")            // peach
 	failG    = fg("#f38ba8")            // red
@@ -42,71 +41,50 @@ func trunc(s string, n int) string {
 }
 
 func glyphRune(it item) string {
-	switch it.kind {
-	case "relay":
-		return "↻"
-	case "newtab", "newwin", "project":
-		return "+"
-	case "open":
-		switch it.status {
-		case "focused":
-			return "●"
-		case "running":
-			return "⏵"
-		case "failed":
-			return "✗"
-		default:
-			return "○"
-		}
+	if it.kind != "open" {
+		return "+" // project
 	}
-	return " "
+	switch it.status {
+	case "focused":
+		return "●"
+	case "running":
+		return "⏵"
+	case "failed":
+		return "✗"
+	default:
+		return "○"
+	}
 }
 
 func glyphStyle(it item) lipgloss.Style {
-	switch it.kind {
-	case "relay", "newtab", "newwin":
-		return relaySt
-	case "open":
-		switch it.status {
-		case "focused":
-			return focG
-		case "running":
-			return runG
-		case "failed":
-			return failG
-		default:
-			return openSt
-		}
+	if it.kind != "open" {
+		return dim // project
 	}
-	return dim
+	switch it.status {
+	case "focused":
+		return focG
+	case "running":
+		return runG
+	case "failed":
+		return failG
+	default:
+		return openSt
+	}
 }
 
 func nameOf(it item) string {
-	switch it.kind {
-	case "relay":
-		return "relayout · " + filepath.Base(it.dir)
-	case "newtab", "newwin":
-		return it.title
-	case "open":
-		n := filepath.Base(it.dir)
-		if n == "" || n == "/" || n == "." {
-			n = it.title
-		}
-		return n
-	default:
-		return filepath.Base(it.dir)
+	n := filepath.Base(it.dir)
+	if it.kind == "open" && (n == "" || n == "/" || n == ".") {
+		n = it.title
 	}
+	return n
 }
 
 func nameStyle(it item) lipgloss.Style {
-	switch it.kind {
-	case "relay", "newtab", "newwin":
-		return relaySt
-	case "open":
+	if it.kind == "open" {
 		return openSt
-	default:
-		return dirSt
 	}
+	return dirSt
 }
 
 // meta is the compact trailing context for an open row: the running command + a dirty
@@ -216,7 +194,7 @@ func (m model) View() string {
 		if m.status != "" {
 			prompt += dim.Render("   ") + statusSt.Render(m.status)
 		}
-		footer = dim.Render("l open · m move-pane · x close · r rename · h back · q quit")
+		footer = dim.Render("l open · . relayout · m move (M new tab · W new win) · x close · r rename · q quit")
 	}
 
 	// list column

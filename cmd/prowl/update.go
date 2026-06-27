@@ -73,25 +73,14 @@ func (m model) actOn(idx int) (model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	switch it.kind {
-	case "open":
+	if it.kind == "open" {
 		_ = focusWindow(it.winID)
 		return m, tea.Quit
-	case "newtab":
-		if m.source > 0 {
-			_ = moveToNewTab(m.source)
-		}
-		return m, tea.Quit
-	case "newwin":
-		if m.source > 0 {
-			_ = moveToNewOSWindow(m.source)
-		}
-		return m, tea.Quit
-	default: // relay / project → pick a layout for that dir
-		m.mode, m.layDir, m.layCur = "layout", it.dir, 0
-		m.layouts = paletteNames()
-		return m.moved()
 	}
+	// project → pick a layout for that dir
+	m.mode, m.layDir, m.layCur = "layout", it.dir, 0
+	m.layouts = paletteNames()
+	return m.moved()
 }
 
 // updateNav (default mode): vim hjkl navigation. j/k move · l/enter open/drill · h back
@@ -124,6 +113,22 @@ func (m model) updateNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				_ = moveToTab(m.source, it.tabID)
 				return m, tea.Quit
 			}
+		}
+	case "M": // move the pane you came from to a new tab
+		if m.source > 0 {
+			_ = moveToNewTab(m.source)
+			return m, tea.Quit
+		}
+	case "W": // move the pane you came from to a new OS window
+		if m.source > 0 {
+			_ = moveToNewOSWindow(m.source)
+			return m, tea.Quit
+		}
+	case ".": // relayout the current dir → pick a layout
+		if m.cwd != "" {
+			m.mode, m.layDir, m.layCur = "layout", m.cwd, 0
+			m.layouts = paletteNames()
+			return m.moved()
 		}
 	case "x": // close the highlighted tab
 		if it, ok := m.sel(); ok && it.kind == "open" {

@@ -1,24 +1,25 @@
 # prowl
 
-A flat, fuzzy **palette for [kitty](https://sw.kovidgoyal.net/kitty/)** — one keystroke to
+A **palette for [kitty](https://sw.kovidgoyal.net/kitty/)** — vim-navigated, one keystroke to
 jump to an open project tab, or open a directory in a chosen layout. A remote-control client
 (it shells out to `kitty @`), not a kitten, so it's a normal Go TUI.
 
 ```
-❯ infra▌   3
-  ⏵ infra-base            │ infra-base    main    4 changes
-  ○ infra-base            │
-  + infra-base            │ Justfile  README.md  modules/  …
-  ↻ relayout · infra-base │
+prowl   j/k nav · l open · / search
+  ⏵ infra-base   nvim main *4 │ infra-base    main    4 changes
+  ○ scripts              zsh  │ Justfile  README.md  modules/  …
+  + ibm-helper                │
 ```
 
-One filterable list:
+The list is just jump/open targets:
 
-- **`↻` relay** — the current dir → pick a layout.
-- **`⏵ ○ ● ✗` open tabs** — jump to one (no duplicate). The glyph is its live status:
-  running · idle · focused · last command failed.
+- **`⏵ ○ ● ✗` open tabs** — `l`/enter jumps (no duplicate). The glyph is live status:
+  running · idle · focused · last command failed; the meta is the running cmd + git dirty.
 - **`+` projects** — directories from [zoxide](https://github.com/ajeetdsouza/zoxide) +
-  your `~/Project/{gitlab,github}` roots, deduped against what's already open → pick a layout.
+  your `~/Project/{gitlab,github}` roots, deduped against what's open → `l` picks a layout.
+
+Actions live on keys, not rows: `.` relayout the current dir · `m`/`M`/`W` move the pane you
+came from (into the tab · a new tab · a new OS window).
 
 The right pane previews the selection: git branch + change count + listing for a directory,
 or the layout sketch when you're choosing one.
@@ -31,7 +32,8 @@ Vim navigation; search lives behind `/`.
 |-----|--------|
 | `j`/`k` · `↑`/`↓` | move (`g`/`G` top/bottom) |
 | `l` / `enter` | open: jump to a tab · pick-a-layout for a dir · move (move-targets) |
-| `m` | move the pane you came from into the highlighted tab |
+| `.` | relayout the current dir (layout picker for where you launched) |
+| `m` · `M` · `W` | move the pane you came from → highlighted tab · new tab · new OS window |
 | `x` | close the highlighted tab |
 | `r` | rename the highlighted tab |
 | `h` | back out (in the layout picker → back to the list) |

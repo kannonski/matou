@@ -8,7 +8,7 @@ import (
 
 // item is one palette row.
 type item struct {
-	kind    string // "relay" | "open" | "project" | "newtab" | "newwin"
+	kind    string // "open" | "project"
 	dir     string // cwd (relay/open) or project dir
 	winID   int    // open: window to focus
 	tabID   int    // open: tab to kill / rename
@@ -40,7 +40,8 @@ type model struct {
 
 	rtab   int    // tab being renamed
 	rinput string // rename input buffer
-	source int    // window id to move on ctrl-s (0 = launched without a source)
+	source int    // window id to move (0 = launched without a source)
+	cwd    string // launch dir, for the relayout key (.)
 
 	preview string
 	cache   map[string]string // dir:/layout: → local preview text
@@ -63,21 +64,15 @@ func (m model) reload() model {
 		return m
 	}
 	m.err = ""
+	if cwd, e := os.Getwd(); e == nil {
+		m.cwd = cwd // for the relayout key (.)
+	}
 	var all []item
-	// recent open tabs first (so the easiest labels jump to where you most likely want to go)
-	for _, t := range tabs {
+	for _, t := range tabs { // recent open tabs first (frecency)
 		all = append(all, item{
 			kind: "open", dir: t.cwd, winID: t.winID, tabID: t.tabID, title: t.title,
 			status: t.status, proc: t.proc, branch: t.branch, changes: t.changes,
 		})
-	}
-	if cwd, e := os.Getwd(); e == nil && cwd != "" {
-		all = append(all, item{kind: "relay", dir: cwd})
-	}
-	if m.source > 0 { // move targets — only meaningful when launched with a source window
-		all = append(all,
-			item{kind: "newtab", title: "move the pane here → a new tab"},
-			item{kind: "newwin", title: "move the pane here → a new OS window"})
 	}
 	for _, d := range projectDirs(openCwds) { // zoxide frecency order
 		all = append(all, item{kind: "project", dir: d})
