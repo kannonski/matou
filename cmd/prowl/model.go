@@ -40,8 +40,12 @@ type model struct {
 
 	rtab   int    // tab being renamed
 	rinput string // rename input buffer
-	source int    // window id to move (0 = launched without a source)
 	cwd    string // launch dir, for the relayout key (.)
+
+	// move mode: pick a pane (stage A: moveSrc==0), then a destination (stage B)
+	moveSrc     int    // window id of the pane being moved
+	moveSrcTab  int    // its tab (excluded as a destination)
+	moveSrcName string // shown in the move-mode header
 
 	preview string
 	cache   map[string]string // dir:/layout: → local preview text
@@ -92,6 +96,21 @@ const topProjects = 10
 // no query it shows everything except the project long-tail (capped to topProjects, the
 // most recent); typing a query searches the full set.
 func (m model) applyFilter() model {
+	if m.mode == "move" { // move mode lists tabs only (stage B excludes the source's tab)
+		view := make([]int, 0, len(m.all))
+		for i, it := range m.all {
+			if it.kind != "open" {
+				continue
+			}
+			if m.moveSrc != 0 && it.tabID == m.moveSrcTab {
+				continue
+			}
+			view = append(view, i)
+		}
+		m.view = view
+		m.cur = clamp(m.cur, len(view))
+		return m
+	}
 	q := strings.ToLower(strings.TrimSpace(m.query))
 	view := make([]int, 0, len(m.all))
 	projects := 0

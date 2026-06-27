@@ -18,8 +18,8 @@ The list is just jump/open targets:
 - **`+` projects** — directories from [zoxide](https://github.com/ajeetdsouza/zoxide) +
   your `~/Project/{gitlab,github}` roots, deduped against what's open → `l` picks a layout.
 
-Actions live on keys, not rows: `.` relayout the current dir · `m`/`M`/`W` move the pane you
-came from (into the tab · a new tab · a new OS window).
+Actions live on keys, not rows: `.` relayout the current dir · `m` move a pane (pick the
+pane, then drop it into a tab, a new tab, or a new OS window).
 
 The right pane previews the selection: git branch + change count + listing for a directory,
 or the layout sketch when you're choosing one.
@@ -32,8 +32,8 @@ Vim navigation; search lives behind `/`.
 |-----|--------|
 | `j`/`k` · `↑`/`↓` | move (`g`/`G` top/bottom) |
 | `l` / `enter` | open: jump to a tab · pick-a-layout for a dir · move (move-targets) |
+| `m` | move a pane — pick the pane, then `↵` into a tab · `M` new tab · `W` new OS window · `esc` back |
 | `.` | relayout the current dir (layout picker for where you launched) |
-| `m` · `M` · `W` | move the pane you came from → highlighted tab · new tab · new OS window |
 | `x` | close the highlighted tab |
 | `r` | rename the highlighted tab |
 | `h` | back out (in the layout picker → back to the list) |

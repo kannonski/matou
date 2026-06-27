@@ -30,6 +30,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateRename(msg)
 		case "filter":
 			return m.updateFilter(msg)
+		case "move":
+			return m.updateMove(msg)
 		default:
 			return m.updateNav(msg)
 		}
@@ -107,23 +109,9 @@ func (m model) updateNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.mode, m.query = "filter", ""
 		return m.applyFilter().moved()
-	case "m": // move the pane you came from into the highlighted tab
-		if m.source > 0 {
-			if it, ok := m.sel(); ok && it.kind == "open" {
-				_ = moveToTab(m.source, it.tabID)
-				return m, tea.Quit
-			}
-		}
-	case "M": // move the pane you came from to a new tab
-		if m.source > 0 {
-			_ = moveToNewTab(m.source)
-			return m, tea.Quit
-		}
-	case "W": // move the pane you came from to a new OS window
-		if m.source > 0 {
-			_ = moveToNewOSWindow(m.source)
-			return m, tea.Quit
-		}
+	case "m": // move a pane → enter move mode (pick the pane, then a destination)
+		m.mode, m.moveSrc, m.moveSrcTab, m.moveSrcName = "move", 0, 0, ""
+		return m.applyFilter().moved()
 	case ".": // relayout the current dir → pick a layout
 		if m.cwd != "" {
 			m.mode, m.layDir, m.layCur = "layout", m.cwd, 0
@@ -196,6 +184,51 @@ func (m model) updateLayout(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "k", "up", "ctrl+p":
 		m.layCur = clamp(m.layCur-1, len(m.layouts))
 		return m.moved()
+	}
+	return m, nil
+}
+
+// updateMove drives the two-stage move. Stage A (moveSrc==0): pick the pane to move from
+// the tab list. Stage B: pick a destination — enter into the highlighted tab, M = a new
+// tab, W = a new OS window. esc steps back (B→A) or cancels (A→nav).
+func (m model) updateMove(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "esc":
+		if m.moveSrc != 0 { // stage B → back to picking the pane
+			m.moveSrc, m.moveSrcTab, m.moveSrcName = 0, 0, ""
+			return m.applyFilter().moved()
+		}
+		m.mode = "" // stage A → back to nav
+		return m.applyFilter().moved()
+	case "j", "down", "ctrl+n":
+		m.cur = clamp(m.cur+1, len(m.view))
+		return m.moved()
+	case "k", "up", "ctrl+p":
+		m.cur = clamp(m.cur-1, len(m.view))
+		return m.moved()
+	case "enter", "l":
+		it, ok := m.sel()
+		if !ok {
+			return m, nil
+		}
+		if m.moveSrc == 0 { // stage A: this pane will be moved
+			m.moveSrc, m.moveSrcTab, m.moveSrcName = it.winID, it.tabID, nameOf(it)
+			return m.applyFilter().moved()
+		}
+		_ = moveToTab(m.moveSrc, it.tabID) // stage B: into the highlighted tab
+		return m, tea.Quit
+	case "M": // stage B: to a new tab
+		if m.moveSrc != 0 {
+			_ = moveToNewTab(m.moveSrc)
+			return m, tea.Quit
+		}
+	case "W": // stage B: to a new OS window
+		if m.moveSrc != 0 {
+			_ = moveToNewOSWindow(m.moveSrc)
+			return m, tea.Quit
+		}
 	}
 	return m, nil
 }

@@ -110,17 +110,11 @@ func (m model) navActions() string {
 	it, ok := m.sel()
 	switch {
 	case ok && it.kind == "open":
-		a = append(a, "↵ jump")
-		if m.source > 0 {
-			a = append(a, "m move here")
-		}
-		a = append(a, "x close", "r rename")
+		a = append(a, "↵ jump", "x close", "r rename")
 	case ok: // project
 		a = append(a, "↵ open")
 	}
-	if m.source > 0 {
-		a = append(a, "M new-tab", "W new-win")
-	}
+	a = append(a, "m move")
 	if m.cwd != "" {
 		a = append(a, ". relayout")
 	}
@@ -210,6 +204,14 @@ func (m model) View() string {
 	case "rename":
 		prompt = promptSt.Render("rename tab ❯ ") + m.rinput + selSt.Render("▌")
 		footer = dim.Render("enter save · esc cancel")
+	case "move":
+		if m.moveSrc == 0 { // stage A — pick the pane to move
+			prompt = promptSt.Render("move which pane?")
+			footer = dim.Render("j/k pick · ↵ choose this pane · esc cancel")
+		} else { // stage B — pick a destination
+			prompt = promptSt.Render("move " + m.moveSrcName + " →")
+			footer = dim.Render("↵ into this tab · M new tab · W new OS window · esc back")
+		}
 	case "filter":
 		prompt = promptSt.Render("❯ ") + m.query + selSt.Render("▌") +
 			dim.Render(fmt.Sprintf("   %d match", len(m.view)))

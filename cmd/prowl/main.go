@@ -15,8 +15,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func loadModel(source int) (model, error) {
-	m := model{cache: map[string]string{}, agentCache: map[string]string{}, source: source}
+func loadModel() (model, error) {
+	m := model{cache: map[string]string{}, agentCache: map[string]string{}}
 	m = m.reload()
 	if m.err != "" {
 		return m, errors.New(m.err)
@@ -26,11 +26,10 @@ func loadModel(source int) (model, error) {
 
 func main() {
 	once := flag.Bool("once", false, "render once to stdout and exit (no TUI)")
-	source := flag.Int("source", 0, "window id to move on ctrl-s (set by the prowl.py kitten)")
 	flag.Parse()
 	loadConfig()
 
-	m, err := loadModel(*source)
+	m, err := loadModel()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "prowl: `kitty @ ls` failed — run inside kitty with remote control enabled")
 		fmt.Fprintln(os.Stderr, "  (allow_remote_control + listen_on). detail:", err)
