@@ -131,8 +131,10 @@ func (m model) refreshPreview() model {
 	case it.dir != "":
 		local := m.cached("dir:"+it.dir, func() string { return dirPreview(it.dir) })
 		head := ""
-		if c, ok := m.agentCache[it.dir]; ok { // the hook's brief, on top of the local preview
-			head = c + "\n\n"
+		if c, ok := m.agentCache[it.dir]; ok {
+			if c != "" { // the hook's brief, on top of the local preview (empty = nothing to add)
+				head = c + "\n\n"
+			}
 		} else if previewHook != "" && m.pending == it.dir {
 			head = "⏳ asking the agent…\n\n"
 		}
