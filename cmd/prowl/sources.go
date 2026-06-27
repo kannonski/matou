@@ -41,7 +41,3 @@ func projectDirs(openCwds map[string]bool) []string {
 	add(filepath.Join(home, ".config/nvim"))
 	return out
 }
-
-func zoxideRemove(dir string) error {
-	return exec.Command("zoxide", "remove", dir).Run()
-}

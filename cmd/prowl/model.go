@@ -89,14 +89,31 @@ func (m model) reload() model {
 	return m.applyFilter().refreshPreview()
 }
 
-// applyFilter recomputes the visible rows for the query (case-insensitive substring).
+// topProjects caps how many projects show with no query — keeps the default list to the
+// most-recent handful (open tabs + relay are always shown). `/` searches all of them.
+const topProjects = 10
+
+// applyFilter recomputes the visible rows for the query (case-insensitive substring). With
+// no query it shows everything except the project long-tail (capped to topProjects, the
+// most recent); typing a query searches the full set.
 func (m model) applyFilter() model {
 	q := strings.ToLower(strings.TrimSpace(m.query))
 	view := make([]int, 0, len(m.all))
+	projects := 0
 	for i, it := range m.all {
-		if q == "" || strings.Contains(it.filterStr(), q) {
-			view = append(view, i)
+		if q != "" {
+			if strings.Contains(it.filterStr(), q) {
+				view = append(view, i)
+			}
+			continue
 		}
+		if it.kind == "project" {
+			if projects >= topProjects {
+				continue
+			}
+			projects++
+		}
+		view = append(view, i)
 	}
 	m.view = view
 	m.cur = clamp(m.cur, len(view))

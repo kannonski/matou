@@ -94,47 +94,10 @@ func (m model) actOn(idx int) (model, tea.Cmd) {
 	}
 }
 
-// rowAction handles the per-row action keys (move / kill / rename / prune), shared by the
-// label and filter modes. handled=true means the key was an action key (consumed).
-func (m model) rowAction(msg tea.KeyMsg) (model, tea.Cmd, bool) {
-	switch msg.Type {
-	case tea.KeyCtrlS: // move the source pane into the highlighted open tab
-		if m.source > 0 {
-			if it, ok := m.sel(); ok && it.kind == "open" {
-				_ = moveToTab(m.source, it.tabID)
-				return m, tea.Quit, true
-			}
-		}
-		return m, nil, true
-	case tea.KeyCtrlX: // close the highlighted open tab
-		if it, ok := m.sel(); ok && it.kind == "open" {
-			_ = closeTab(it.tabID)
-			return m.reload(), nil, true
-		}
-		return m, nil, true
-	case tea.KeyCtrlD: // prune a project from zoxide
-		if it, ok := m.sel(); ok && it.kind == "project" {
-			_ = zoxideRemove(it.dir)
-			return m.reload(), nil, true
-		}
-		return m, nil, true
-	case tea.KeyCtrlR: // rename the highlighted open tab
-		if it, ok := m.sel(); ok && it.kind == "open" {
-			m.mode, m.rtab, m.rinput = "rename", it.tabID, it.title
-			return m, nil, true
-		}
-		return m, nil, true
-	}
-	return m, nil, false
-}
-
 // updateNav (default mode): vim hjkl navigation. j/k move · l/enter open/drill · h back
 // out · g/G top/bottom · "/" search · ctrl-s/x/r/d row actions. No typing-to-filter here —
 // letters are navigation; search lives behind "/".
 func (m model) updateNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if nm, cmd, ok := m.rowAction(msg); ok {
-		return nm, cmd
-	}
 	switch msg.String() {
 	case "q", "esc", "ctrl+c", "h":
 		return m, tea.Quit
@@ -155,15 +118,29 @@ func (m model) updateNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.mode, m.query = "filter", ""
 		return m.applyFilter().moved()
+	case "m": // move the pane you came from into the highlighted tab
+		if m.source > 0 {
+			if it, ok := m.sel(); ok && it.kind == "open" {
+				_ = moveToTab(m.source, it.tabID)
+				return m, tea.Quit
+			}
+		}
+	case "x": // close the highlighted tab
+		if it, ok := m.sel(); ok && it.kind == "open" {
+			_ = closeTab(it.tabID)
+			return m.reload().moved()
+		}
+	case "r": // rename the highlighted tab
+		if it, ok := m.sel(); ok && it.kind == "open" {
+			m.mode, m.rtab, m.rinput = "rename", it.tabID, it.title
+			return m, nil
+		}
 	}
 	return m, nil
 }
 
 // updateFilter: type to narrow, arrows + enter to act, esc back to labels.
 func (m model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if nm, cmd, ok := m.rowAction(msg); ok {
-		return nm, cmd
-	}
 	switch msg.Type {
 	case tea.KeyCtrlC:
 		return m, tea.Quit

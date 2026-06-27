@@ -212,11 +212,11 @@ func (m model) View() string {
 			dim.Render(fmt.Sprintf("   %d match", len(m.view)))
 		footer = dim.Render("↵ go · ^s move · ^x kill · ^r rename · ^d prune · esc")
 	default: // nav (vim)
-		prompt = promptSt.Render("prowl") + dim.Render("   j/k move · l open · / search · q quit")
+		prompt = promptSt.Render("prowl") + dim.Render("   j/k nav · l open · / search")
 		if m.status != "" {
 			prompt += dim.Render("   ") + statusSt.Render(m.status)
 		}
-		footer = dim.Render("l/↵ open · h back · ^s move · ^x kill · ^r rename · ^d prune")
+		footer = dim.Render("l open · m move-pane · x close · r rename · h back · q quit")
 	}
 
 	// list column

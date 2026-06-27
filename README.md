@@ -31,13 +31,15 @@ Vim navigation; search lives behind `/`.
 |-----|--------|
 | `j`/`k` · `↑`/`↓` | move (`g`/`G` top/bottom) |
 | `l` / `enter` | open: jump to a tab · pick-a-layout for a dir · move (move-targets) |
+| `m` | move the pane you came from into the highlighted tab |
+| `x` | close the highlighted tab |
+| `r` | rename the highlighted tab |
 | `h` | back out (in the layout picker → back to the list) |
-| `/` | search — type to filter, `esc` back to nav |
-| `ctrl-s` | move the pane you came from into the highlighted tab |
-| `ctrl-x` | close the highlighted tab |
-| `ctrl-r` | rename the highlighted tab |
-| `ctrl-d` | prune a project from zoxide |
+| `/` | search **all** projects — type to filter, `esc` back to nav |
 | `q` / `esc` | quit |
+
+The default list is short — open tabs, relay, and the **~10 most recent projects**. Hit `/`
+to search the full set.
 
 ## Requirements
 
