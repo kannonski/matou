@@ -1,8 +1,9 @@
 // prowl — a flat fuzzy palette for kitty: jump to an open project tab, or open a directory
 // (zoxide + your ~/Project roots) in a chosen layout, with a live preview and per-tab status
-// (focused · running · idle · failed). Move/kill/rename/prune are the per-row actions.
-// Reuses your palette.py layout engine. A remote-control client (not a kitten): run inside
-// kitty with allow_remote_control + listen_on. The prowl.py kitten launches it with --source.
+// (focused · running · idle · failed). Reuses your palette.py layout engine. A remote-control
+// client (not a kitten): run inside kitty with allow_remote_control + listen_on. Launched as
+// an overlay tagged user_var prowl=1; it self-toggles (closes a sibling prowl on startup), so
+// the bound key opens it once and dismisses it on a second press — no Python kitten needed.
 package main
 
 import (
@@ -28,6 +29,20 @@ func main() {
 	once := flag.Bool("once", false, "render once to stdout and exit (no TUI)")
 	flag.Parse()
 	loadConfig()
+
+	// Singleton toggle: prowl is launched as an overlay tagged user_var prowl=1. If one is
+	// already open in this tab, close it and exit (the new overlay flashes briefly, then both
+	// close) — pressing the bound key again dismisses prowl. No kitten needed.
+	if !*once {
+		if self, _ := strconv.Atoi(os.Getenv("KITTY_WINDOW_ID")); self != 0 {
+			if tree, err := kittyLS(); err == nil {
+				if other := findOtherProwl(tree, self); other != 0 {
+					_ = closeWindow(other)
+					return
+				}
+			}
+		}
+	}
 
 	m, err := loadModel()
 	if err != nil {

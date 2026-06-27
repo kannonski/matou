@@ -30,17 +30,18 @@ type tab struct {
 }
 
 type kwin struct {
-	ID                  int        `json:"id"`
-	Title               string     `json:"title"`
-	PID                 int        `json:"pid"`
-	CWD                 string     `json:"cwd"`
-	Cmdline             []string   `json:"cmdline"`
-	ForegroundProcesses []procInfo `json:"foreground_processes"`
-	IsFocused           bool       `json:"is_focused"`
-	IsActive            bool       `json:"is_active"`
-	AtPrompt            bool       `json:"at_prompt"`
-	LastExit            int        `json:"last_cmd_exit_status"`
-	LastFocusedAt       float64    `json:"last_focused_at"`
+	ID                  int               `json:"id"`
+	Title               string            `json:"title"`
+	PID                 int               `json:"pid"`
+	CWD                 string            `json:"cwd"`
+	Cmdline             []string          `json:"cmdline"`
+	ForegroundProcesses []procInfo        `json:"foreground_processes"`
+	IsFocused           bool              `json:"is_focused"`
+	IsActive            bool              `json:"is_active"`
+	AtPrompt            bool              `json:"at_prompt"`
+	LastExit            int               `json:"last_cmd_exit_status"`
+	LastFocusedAt       float64           `json:"last_focused_at"`
+	UserVars            map[string]string `json:"user_vars"`
 }
 
 type procInfo struct {
@@ -67,6 +68,31 @@ func focusWindow(id int) error {
 
 func closeTab(tabID int) error {
 	return exec.Command("kitty", "@", "close-tab", "--match", "id:"+strconv.Itoa(tabID)).Run()
+}
+
+func closeWindow(winID int) error {
+	return exec.Command("kitty", "@", "close-window", "--match", "id:"+strconv.Itoa(winID)).Run()
+}
+
+// findOtherProwl returns the id of another prowl overlay (tagged user_var prowl=1) in the
+// focused tab, excluding self — the startup self-toggle uses it to dismiss an open prowl.
+func findOtherProwl(tree []osWindow, self int) int {
+	for _, ow := range tree {
+		if !ow.IsFocused {
+			continue
+		}
+		for _, t := range ow.Tabs {
+			if !t.IsActive {
+				continue
+			}
+			for _, w := range t.Windows {
+				if w.ID != self && w.UserVars["prowl"] == "1" {
+					return w.ID
+				}
+			}
+		}
+	}
+	return 0
 }
 
 func setTabTitle(tabID int, title string) error {
