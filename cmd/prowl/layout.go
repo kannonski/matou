@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -47,21 +46,8 @@ func paletteBuild(name, dir string) error {
 // plain listing. Plain text (no ANSI) so it's safe to truncate per line.
 func dirPreview(dir string) string {
 	var b strings.Builder
-	if out, err := exec.Command("git", "-C", dir, "rev-parse", "--is-inside-work-tree").Output(); err == nil &&
-		strings.TrimSpace(string(out)) == "true" {
-		br, _ := exec.Command("git", "-C", dir, "branch", "--show-current").Output()
-		branch := strings.TrimSpace(string(br))
-		if branch == "" {
-			branch = "(detached)"
-		}
-		st, _ := exec.Command("git", "-C", dir, "status", "--porcelain").Output()
-		n := 0
-		for _, l := range strings.Split(strings.TrimSpace(string(st)), "\n") {
-			if strings.TrimSpace(l) != "" {
-				n++
-			}
-		}
-		fmt.Fprintf(&b, "%s    %s    %s changes\n\n", filepath.Base(dir), branch, strconv.Itoa(n))
+	if branch, changes, repo := gitStatus(dir); repo {
+		fmt.Fprintf(&b, "%s    %s    %d changes\n\n", filepath.Base(dir), branch, changes)
 	} else {
 		fmt.Fprintf(&b, "%s    (not a git repo)\n\n", filepath.Base(dir))
 	}

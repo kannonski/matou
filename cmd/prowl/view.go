@@ -3,25 +3,31 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Catppuccin Mocha
+func fg(hex string) lipgloss.Style { return lipgloss.NewStyle().Foreground(lipgloss.Color(hex)) }
+
 var (
-	promptSt   = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	selSt      = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	labelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
-	dim        = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	dirSt      = lipgloss.NewStyle().Foreground(lipgloss.Color("180"))
-	openSt     = lipgloss.NewStyle().Foreground(lipgloss.Color("117"))
-	relaySt    = lipgloss.NewStyle().Foreground(lipgloss.Color("183"))
-	focG       = lipgloss.NewStyle().Foreground(lipgloss.Color("120"))
-	runG       = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	failG      = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	errSt      = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	statusSt   = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
-	borderC    = lipgloss.Color("238")
+	promptSt   = fg("#cba6f7").Bold(true) // mauve
+	selSt      = fg("#f5c2e7").Bold(true) // pink
+	labelStyle = fg("#f9e2af").Bold(true) // yellow
+	dim        = fg("#6c7086")            // overlay0
+	metaSt     = fg("#7f849c")            // overlay1 — inline cmd/git
+	dirSt      = fg("#a6adc8")            // subtext0 — project names
+	openSt     = fg("#89b4fa")            // blue — open tab names
+	relaySt    = fg("#cba6f7")            // mauve — relay / move targets
+	focG       = fg("#a6e3a1")            // green
+	runG       = fg("#fab387")            // peach
+	failG      = fg("#f38ba8")            // red
+	errSt      = fg("#f38ba8")
+	statusSt   = fg("#f5c2e7")
+	barStyle   = lipgloss.NewStyle().Background(lipgloss.Color("#45475a")).Foreground(lipgloss.Color("#cdd6f4"))
+	borderC    = lipgloss.Color("#585b70")
 )
 
 func trunc(s string, n int) string {
@@ -35,17 +41,91 @@ func trunc(s string, n int) string {
 	return string(r[:n-1]) + "…"
 }
 
-func glyph(status string) string {
-	switch status {
-	case "focused":
-		return focG.Render("●")
-	case "running":
-		return runG.Render("⏵")
-	case "failed":
-		return failG.Render("✗")
-	default:
-		return openSt.Render("○") // open but idle at the prompt
+func glyphRune(it item) string {
+	switch it.kind {
+	case "relay":
+		return "↻"
+	case "newtab", "newwin", "project":
+		return "+"
+	case "open":
+		switch it.status {
+		case "focused":
+			return "●"
+		case "running":
+			return "⏵"
+		case "failed":
+			return "✗"
+		default:
+			return "○"
+		}
 	}
+	return " "
+}
+
+func glyphStyle(it item) lipgloss.Style {
+	switch it.kind {
+	case "relay", "newtab", "newwin":
+		return relaySt
+	case "open":
+		switch it.status {
+		case "focused":
+			return focG
+		case "running":
+			return runG
+		case "failed":
+			return failG
+		default:
+			return openSt
+		}
+	}
+	return dim
+}
+
+func nameOf(it item) string {
+	switch it.kind {
+	case "relay":
+		return "relayout · " + filepath.Base(it.dir)
+	case "newtab", "newwin":
+		return it.title
+	case "open":
+		n := filepath.Base(it.dir)
+		if n == "" || n == "/" || n == "." {
+			n = it.title
+		}
+		return n
+	default:
+		return filepath.Base(it.dir)
+	}
+}
+
+func nameStyle(it item) lipgloss.Style {
+	switch it.kind {
+	case "relay", "newtab", "newwin":
+		return relaySt
+	case "open":
+		return openSt
+	default:
+		return dirSt
+	}
+}
+
+// meta is the dim trailing context for an open row: "nvim  main *3".
+func (it item) meta() string {
+	if it.kind != "open" {
+		return ""
+	}
+	var parts []string
+	if it.proc != "" {
+		parts = append(parts, it.proc)
+	}
+	if it.branch != "" {
+		b := it.branch
+		if it.changes > 0 {
+			b += " *" + strconv.Itoa(it.changes)
+		}
+		parts = append(parts, b)
+	}
+	return strings.Join(parts, "  ")
 }
 
 // windowRange returns the [start,end) slice of n items to show in h rows, centring cur.
@@ -59,37 +139,43 @@ func windowRange(cur, n, h int) (int, int) {
 
 func (m model) leftRow(viewIdx, leftW int, selected bool) string {
 	it := m.all[m.view[viewIdx]]
-	avail := leftW - 4
-	// lead: the jump label (label mode) or a cursor marker (filter mode)
+	k := labelFor(viewIdx)
+	gr := glyphRune(it)
+	name := nameOf(it)
+	meta := it.meta()
+
+	avail := leftW - 4 // lead(2) + glyph(1) + space(1)
+	metaW := 0
+	if meta != "" {
+		metaW = len([]rune(meta)) + 2 // "  " + meta
+	}
+	nameMax := avail - metaW
+	if nameMax < 6 { // too tight — drop meta, give the name the room
+		nameMax, meta, metaW = avail, "", 0
+	}
+	name = trunc(name, nameMax)
+
+	if selected { // a single-style highlight bar (no per-segment ANSI to break the bg)
+		lead := "  "
+		if k != "" {
+			lead = k + " "
+		}
+		line := lead + gr + " " + name
+		if meta != "" {
+			line += "  " + meta
+		}
+		return barStyle.Width(leftW).Render(line)
+	}
+
 	lead := "  "
-	if m.mode == "" {
-		if k := labelFor(viewIdx); k != "" {
-			lead = labelStyle.Render(k) + " "
-		}
-	} else if selected {
-		lead = selSt.Render("▸ ")
+	if m.mode == "" && k != "" {
+		lead = labelStyle.Render(k) + " "
 	}
-	var g, name string
-	nameSt := dirSt
-	switch it.kind {
-	case "relay":
-		g, name, nameSt = relaySt.Render("↻"), "relayout · "+filepath.Base(it.dir), relaySt
-	case "open":
-		g = glyph(it.status)
-		name = filepath.Base(it.dir)
-		if name == "" || name == "/" || name == "." {
-			name = it.title
-		}
-		nameSt = openSt
-	case "newtab", "newwin": // move-the-source-pane targets
-		g, name, nameSt = relaySt.Render("+"), it.title, relaySt
-	default: // project — "+" = open a new tab here (vs ○/● = jump to an open one)
-		g, name = dim.Render("+"), filepath.Base(it.dir)
+	out := lead + glyphStyle(it).Render(gr) + " " + nameStyle(it).Render(name)
+	if meta != "" {
+		out += "  " + metaSt.Render(meta)
 	}
-	if selected {
-		nameSt = selSt
-	}
-	return lead + g + " " + nameSt.Render(trunc(name, avail))
+	return out
 }
 
 func (m model) rightContent(rightW, bodyH int) string {
@@ -116,7 +202,7 @@ func (m model) View() string {
 	if h <= 0 {
 		h = 30
 	}
-	leftW := max(30, min(w*2/5, 52))
+	leftW := max(30, min(w*2/5, 54))
 	rightW := max(10, w-leftW-4)
 	bodyH := max(3, h-3)
 
@@ -146,11 +232,11 @@ func (m model) View() string {
 	if m.mode == "layout" {
 		start, end := windowRange(m.layCur, len(m.layouts), bodyH)
 		for i := start; i < end; i++ {
-			c, st := "  ", dim
 			if i == m.layCur {
-				c, st = selSt.Render("▸ "), selSt
+				rows = append(rows, barStyle.Width(leftW).Render("  "+m.layouts[i]))
+			} else {
+				rows = append(rows, dim.Render("  "+m.layouts[i]))
 			}
-			rows = append(rows, c+st.Render(m.layouts[i]))
 		}
 	} else {
 		start, end := windowRange(m.cur, len(m.view), bodyH)

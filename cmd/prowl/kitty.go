@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 )
@@ -97,6 +98,22 @@ type openTab struct {
 	title     string
 	status    string  // focused | running | idle | failed
 	focusedAt float64 // last_focused_at, for recency ordering
+	proc      string  // foreground command (nvim / claude / zsh …)
+	branch    string  // git branch of cwd
+	changes   int     // uncommitted changes
+}
+
+// procName is the foreground command basename in a window (the shell when idle).
+func procName(w kwin) string {
+	if n := len(w.ForegroundProcesses); n > 0 {
+		if cl := w.ForegroundProcesses[n-1].Cmdline; len(cl) > 0 {
+			return filepath.Base(cl[0])
+		}
+	}
+	if len(w.Cmdline) > 0 {
+		return filepath.Base(w.Cmdline[0])
+	}
+	return ""
 }
 
 // openTabs flattens `kitty @ ls` to one jump target per tab (the active window), skipping
@@ -136,7 +153,11 @@ func openTabs() ([]openTab, map[string]bool, error) {
 			case !a.AtPrompt:
 				st = "running"
 			}
-			tabs = append(tabs, openTab{winID: a.ID, tabID: t.ID, cwd: a.CWD, title: t.Title, status: st, focusedAt: a.LastFocusedAt})
+			branch, changes, _ := gitStatus(a.CWD)
+			tabs = append(tabs, openTab{
+				winID: a.ID, tabID: t.ID, cwd: a.CWD, title: t.Title, status: st,
+				focusedAt: a.LastFocusedAt, proc: procName(a), branch: branch, changes: changes,
+			})
 			if a.CWD != "" {
 				cwds[a.CWD] = true
 			}

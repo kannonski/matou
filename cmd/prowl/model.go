@@ -20,12 +20,15 @@ func labelFor(viewIdx int) string {
 
 // item is one palette row.
 type item struct {
-	kind   string // "relay" | "open" | "project" | "newtab" | "newwin"
-	dir    string // cwd (relay/open) or project dir
-	winID  int    // open: window to focus
-	tabID  int    // open: tab to kill / rename
-	title  string // open: tab title; newtab/newwin: the label
-	status string // open: focused | running | idle | failed
+	kind    string // "relay" | "open" | "project" | "newtab" | "newwin"
+	dir     string // cwd (relay/open) or project dir
+	winID   int    // open: window to focus
+	tabID   int    // open: tab to kill / rename
+	title   string // open: tab title; newtab/newwin: the label
+	status  string // open: focused | running | idle | failed
+	proc    string // open: foreground command
+	branch  string // open: git branch
+	changes int    // open: uncommitted changes
 }
 
 func (it item) filterStr() string {
@@ -71,7 +74,10 @@ func (m model) reload() model {
 	var all []item
 	// recent open tabs first (so the easiest labels jump to where you most likely want to go)
 	for _, t := range tabs {
-		all = append(all, item{kind: "open", dir: t.cwd, winID: t.winID, tabID: t.tabID, title: t.title, status: t.status})
+		all = append(all, item{
+			kind: "open", dir: t.cwd, winID: t.winID, tabID: t.tabID, title: t.title,
+			status: t.status, proc: t.proc, branch: t.branch, changes: t.changes,
+		})
 	}
 	if cwd, e := os.Getwd(); e == nil && cwd != "" {
 		all = append(all, item{kind: "relay", dir: cwd})
