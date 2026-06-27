@@ -27,6 +27,7 @@ var (
 	statusSt = fg("#f5c2e7")
 	barStyle = lipgloss.NewStyle().Background(lipgloss.Color("#45475a")).Foreground(lipgloss.Color("#cdd6f4"))
 	borderC  = lipgloss.Color("#585b70")
+	ruleSt   = lipgloss.NewStyle().Foreground(borderC)
 )
 
 func trunc(s string, n int) string {
@@ -108,23 +109,20 @@ func nameStyle(it item) lipgloss.Style {
 	}
 }
 
-// meta is the dim trailing context for an open row: "nvim  main *3".
+// meta is the compact trailing context for an open row: the running command + a dirty
+// count, e.g. "nvim *3" or "zsh". The (often long) branch name lives in the preview.
 func (it item) meta() string {
 	if it.kind != "open" {
 		return ""
 	}
-	var parts []string
-	if it.proc != "" {
-		parts = append(parts, it.proc)
-	}
-	if it.branch != "" {
-		b := it.branch
-		if it.changes > 0 {
-			b += " *" + strconv.Itoa(it.changes)
+	s := it.proc
+	if it.changes > 0 {
+		if s != "" {
+			s += " "
 		}
-		parts = append(parts, b)
+		s += "*" + strconv.Itoa(it.changes)
 	}
-	return strings.Join(parts, "  ")
+	return s
 }
 
 // windowRange returns the [start,end) slice of n items to show in h rows, centring cur.
@@ -142,43 +140,43 @@ func (m model) leftRow(viewIdx, leftW int, selected bool) string {
 	name := nameOf(it)
 	meta := it.meta()
 
-	avail := leftW - 4 // lead(2) + glyph(1) + space(1)
-	metaW := 0
-	if meta != "" {
-		metaW = len([]rune(meta)) + 2 // "  " + meta
+	zone := leftW - 4 // the name … meta area, after "  " + glyph + " "
+	mlen := len([]rune(meta))
+	if mlen > 0 && zone-mlen-1 < 6 { // not enough room for both → drop the meta
+		meta, mlen = "", 0
 	}
-	nameMax := avail - metaW
-	if nameMax < 6 { // too tight — drop meta, give the name the room
-		nameMax, meta, metaW = avail, "", 0
+	nameMax := zone
+	if mlen > 0 {
+		nameMax = zone - mlen - 1
 	}
 	name = trunc(name, nameMax)
+	pad := max(0, zone-len([]rune(name))-mlen) // right-align the meta
 
-	if selected { // single-style highlight bar (no per-segment ANSI to break the bg) = the cursor
-		line := "  " + gr + " " + name
-		if meta != "" {
-			line += "  " + meta
-		}
-		return barStyle.Width(leftW).Render(line)
+	if selected { // single-style highlight bar (= the cursor)
+		return barStyle.Width(leftW).Render("  " + gr + " " + name + strings.Repeat(" ", pad) + meta)
 	}
-
-	out := "  " + glyphStyle(it).Render(gr) + " " + nameStyle(it).Render(name)
+	out := "  " + glyphStyle(it).Render(gr) + " " + nameStyle(it).Render(name) + strings.Repeat(" ", pad)
 	if meta != "" {
-		out += "  " + metaSt.Render(meta)
+		out += metaSt.Render(meta)
 	}
 	return out
 }
 
+// rightContent returns exactly bodyH preview lines (lipgloss.Height only pads, never
+// truncates — so we must cap here or a long listing overruns the frame).
 func (m model) rightContent(rightW, bodyH int) string {
-	lines := strings.Split(m.preview, "\n")
-	if len(lines) > bodyH {
-		lines = lines[:bodyH]
-	}
-	for i, l := range lines {
-		if !strings.Contains(l, "\x1b") { // plain text → safe to truncate by rune width
-			lines[i] = trunc(l, rightW)
+	src := strings.Split(m.preview, "\n")
+	out := make([]string, bodyH)
+	for i := range bodyH {
+		if i < len(src) {
+			l := src[i]
+			if !strings.Contains(l, "\x1b") { // plain text → safe to truncate by rune width
+				l = trunc(l, rightW)
+			}
+			out[i] = l
 		}
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(out, "\n")
 }
 
 func (m model) View() string {
@@ -192,32 +190,36 @@ func (m model) View() string {
 	if h <= 0 {
 		h = 30
 	}
-	leftW := max(30, min(w*2/5, 54))
-	rightW := max(10, w-leftW-4)
-	bodyH := max(3, h-3)
+	innerW := max(20, w-4) // inside the rounded frame: border(2) + padding(2)
+	leftW := max(24, min((innerW-1)*2/5, 52))
+	if leftW > innerW-14 { // always leave the preview some room
+		leftW = max(10, innerW-14)
+	}
+	rightW := max(8, innerW-1-leftW)
+	bodyH := max(3, h-6) // frame chrome; -6 (not -5) keeps it ≤ h despite a lipgloss border quirk
 
-	// prompt + footer per mode
+	// header (prompt) + footer (hints) per mode
 	var prompt, footer string
 	switch m.mode {
 	case "layout":
-		prompt = promptSt.Render("layout for " + filepath.Base(m.layDir) + " ❯")
-		footer = dim.Render("  ↑↓ pick · enter build · esc back")
+		prompt = promptSt.Render("layout for "+filepath.Base(m.layDir)) + dim.Render("   ↵ build · esc back")
+		footer = dim.Render("j/k pick · l/↵ build · h back")
 	case "rename":
 		prompt = promptSt.Render("rename tab ❯ ") + m.rinput + selSt.Render("▌")
-		footer = dim.Render("  enter save · esc cancel")
+		footer = dim.Render("enter save · esc cancel")
 	case "filter":
 		prompt = promptSt.Render("❯ ") + m.query + selSt.Render("▌") +
-			dim.Render(fmt.Sprintf("   %d", len(m.view)))
-		footer = dim.Render("  ↵ go · ^s move · ^x kill · ^r rename · ^d prune · esc")
+			dim.Render(fmt.Sprintf("   %d match", len(m.view)))
+		footer = dim.Render("↵ go · ^s move · ^x kill · ^r rename · ^d prune · esc")
 	default: // nav (vim)
 		prompt = promptSt.Render("prowl") + dim.Render("   j/k move · l open · / search · q quit")
 		if m.status != "" {
 			prompt += dim.Render("   ") + statusSt.Render(m.status)
 		}
-		footer = dim.Render("  l/↵ open · h back · ^s move · ^x kill · ^r rename · ^d prune")
+		footer = dim.Render("l/↵ open · h back · ^s move · ^x kill · ^r rename · ^d prune")
 	}
 
-	// left column
+	// list column
 	var rows []string
 	if m.mode == "layout" {
 		start, end := windowRange(m.layCur, len(m.layouts), bodyH)
@@ -225,7 +227,7 @@ func (m model) View() string {
 			if i == m.layCur {
 				rows = append(rows, barStyle.Width(leftW).Render("  "+m.layouts[i]))
 			} else {
-				rows = append(rows, dim.Render("  "+m.layouts[i]))
+				rows = append(rows, "  "+dim.Render(m.layouts[i]))
 			}
 		}
 	} else {
@@ -240,6 +242,11 @@ func (m model) View() string {
 		Render(strings.Join(rows, "\n"))
 	rightBox := lipgloss.NewStyle().Width(rightW).Height(bodyH).PaddingLeft(1).
 		Render(m.rightContent(rightW, bodyH))
-	body := lipgloss.JoinHorizontal(lipgloss.Top, leftBox, rightBox)
-	return prompt + "\n" + body + "\n" + footer
+	twoPane := lipgloss.JoinHorizontal(lipgloss.Top, leftBox, rightBox)
+
+	rule := ruleSt.Render(strings.Repeat("─", innerW))
+	inner := prompt + "\n" + rule + "\n" + twoPane + "\n" + footer
+	return lipgloss.NewStyle().Padding(0, 1).
+		Border(lipgloss.RoundedBorder()).BorderForeground(borderC).
+		Render(inner)
 }

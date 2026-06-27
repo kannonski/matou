@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -34,7 +35,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  (allow_remote_control + listen_on). detail:", err)
 		os.Exit(1)
 	}
-	if *once {
+	if *once { // honor COLUMNS/LINES so the layout can be checked headlessly
+		if c, _ := strconv.Atoi(os.Getenv("COLUMNS")); c > 0 {
+			m.w = c
+		}
+		if l, _ := strconv.Atoi(os.Getenv("LINES")); l > 0 {
+			m.h = l
+		}
 		fmt.Println(m.View())
 		return
 	}
