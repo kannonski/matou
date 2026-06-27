@@ -16,7 +16,7 @@ import (
 )
 
 func loadModel(source int) (model, error) {
-	m := model{cache: map[string]string{}, source: source}
+	m := model{cache: map[string]string{}, agentCache: map[string]string{}, source: source}
 	m = m.reload()
 	if m.err != "" {
 		return m, errors.New(m.err)
@@ -28,6 +28,7 @@ func main() {
 	once := flag.Bool("once", false, "render once to stdout and exit (no TUI)")
 	source := flag.Int("source", 0, "window id to move on ctrl-s (set by the prowl.py kitten)")
 	flag.Parse()
+	loadConfig()
 
 	m, err := loadModel(*source)
 	if err != nil {

@@ -25,16 +25,19 @@ or the layout sketch when you're choosing one.
 
 ## Keys
 
+Vim navigation; search lives behind `/`.
+
 | Key | Action |
 |-----|--------|
-| *type* | fuzzy-filter the list |
-| `↑`/`↓` · `ctrl-p`/`ctrl-n` | move |
-| `enter` | jump (open tab) · pick-a-layout (relay/project) · move (move-targets) |
+| `j`/`k` · `↑`/`↓` | move (`g`/`G` top/bottom) |
+| `l` / `enter` | open: jump to a tab · pick-a-layout for a dir · move (move-targets) |
+| `h` | back out (in the layout picker → back to the list) |
+| `/` | search — type to filter, `esc` back to nav |
 | `ctrl-s` | move the pane you came from into the highlighted tab |
 | `ctrl-x` | close the highlighted tab |
 | `ctrl-r` | rename the highlighted tab |
 | `ctrl-d` | prune a project from zoxide |
-| `esc` / `ctrl-c` | quit |
+| `q` / `esc` | quit |
 
 ## Requirements
 
@@ -43,6 +46,20 @@ or the layout sketch when you're choosing one.
   `build <name> <dir>` (override the path with `$PROWL_PALETTE`). prowl reuses it rather than
   reinventing layouts.
 - Optional: `zoxide` (project frecency), `git` + `ls` (previews).
+
+## Right-pane agent (optional)
+
+Set `$PROWL_PREVIEW_CMD` to a command and prowl runs it for the selected directory and
+shows its output **on top of** the git + listing preview — e.g. an AI brief of the repo.
+It's **debounced** (only fires for rows you pause on, ~350 ms), **async** (nav stays
+snappy; the pane shows `⏳` until it returns), and **cached** per session. Unset = no hook.
+
+```sh
+export PROWL_PREVIEW_CMD="$HOME/.config/kitty/prowl-preview.sh"   # receives <dir> as $1
+```
+
+See [`examples/agent-preview.sh`](examples/agent-preview.sh) for a sample that briefs the
+repo with an LLM (falls back to `git log` when none is available).
 
 ## Install
 

@@ -43,7 +43,11 @@ type model struct {
 	source int    // window id to move on ctrl-s (0 = launched without a source)
 
 	preview string
-	cache   map[string]string // dir:/layout: → preview text
+	cache   map[string]string // dir:/layout: → local preview text
+
+	agentCache map[string]string // dir → agent-generated preview (the hook's output)
+	pending    string            // dir whose agent preview is currently being generated
+	settleGen  int               // debounce generation for the settle tick
 
 	w, h   int
 	status string
@@ -125,7 +129,14 @@ func (m model) refreshPreview() model {
 	case it.kind == "newwin":
 		m.preview = "Enter — move the pane you came from into a new OS window."
 	case it.dir != "":
-		m.preview = m.cached("dir:"+it.dir, func() string { return dirPreview(it.dir) })
+		local := m.cached("dir:"+it.dir, func() string { return dirPreview(it.dir) })
+		head := ""
+		if c, ok := m.agentCache[it.dir]; ok { // the hook's brief, on top of the local preview
+			head = c + "\n\n"
+		} else if previewHook != "" && m.pending == it.dir {
+			head = "⏳ asking the agent…\n\n"
+		}
+		m.preview = head + local
 	default:
 		m.preview = ""
 	}

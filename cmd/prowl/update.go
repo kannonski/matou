@@ -6,12 +6,22 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func (m model) Init() tea.Cmd { return nil }
+func (m model) Init() tea.Cmd { return settleTick(m.settleGen) }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
+	case previewMsg: // an agent preview came back
+		m.agentCache[msg.dir] = msg.text
+		if m.pending == msg.dir {
+			m.pending = ""
+		}
+		if it, ok := m.sel(); ok && it.dir == msg.dir {
+			m = m.refreshPreview()
+		}
+	case settleMsg:
+		return m.settle(msg.gen)
 	case tea.KeyMsg:
 		switch m.mode {
 		case "layout":
@@ -25,6 +35,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// moved refreshes the preview after a cursor/selection change and (re)arms the settle
+// debounce, so the agent hook fires only once the cursor rests on a row.
+func (m model) moved() (model, tea.Cmd) {
+	m = m.refreshPreview()
+	if previewHook == "" {
+		return m, nil
+	}
+	m.settleGen++
+	return m, settleTick(m.settleGen)
+}
+
+// settle fires when the cursor has rested: if the selected dir has no agent preview yet,
+// kick off the hook (the pane shows ⏳ until it returns).
+func (m model) settle(gen int) (tea.Model, tea.Cmd) {
+	if gen != m.settleGen || previewHook == "" || m.mode == "layout" || m.mode == "rename" {
+		return m, nil
+	}
+	it, ok := m.sel()
+	if !ok || it.dir == "" {
+		return m, nil
+	}
+	if _, done := m.agentCache[it.dir]; done || m.pending == it.dir {
+		return m, nil
+	}
+	m.pending = it.dir
+	return m.refreshPreview(), previewCmd(it.dir)
 }
 
 // actOn performs a row's primary action: jump (open) · move (newtab/newwin) · pick-a-layout
@@ -52,7 +90,7 @@ func (m model) actOn(idx int) (model, tea.Cmd) {
 	default: // relay / project → pick a layout for that dir
 		m.mode, m.layDir, m.layCur = "layout", it.dir, 0
 		m.layouts = paletteNames()
-		return m.refreshPreview(), nil
+		return m.moved()
 	}
 }
 
@@ -102,21 +140,21 @@ func (m model) updateNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "j", "down", "ctrl+n":
 		m.cur = clamp(m.cur+1, len(m.view))
-		return m.refreshPreview(), nil
+		return m.moved()
 	case "k", "up", "ctrl+p":
 		m.cur = clamp(m.cur-1, len(m.view))
-		return m.refreshPreview(), nil
+		return m.moved()
 	case "g", "home":
 		m.cur = 0
-		return m.refreshPreview(), nil
+		return m.moved()
 	case "G", "end":
 		m.cur = clamp(1<<30, len(m.view))
-		return m.refreshPreview(), nil
+		return m.moved()
 	case "l", "enter":
 		return m.actOn(m.cur)
 	case "/":
 		m.mode, m.query = "filter", ""
-		return m.applyFilter().refreshPreview(), nil
+		return m.applyFilter().moved()
 	}
 	return m, nil
 }
@@ -131,29 +169,29 @@ func (m model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case tea.KeyEsc:
 		m.mode, m.query = "", ""
-		return m.applyFilter().refreshPreview(), nil
+		return m.applyFilter().moved()
 	case tea.KeyEnter:
 		return m.actOn(m.cur)
 	case tea.KeyUp, tea.KeyCtrlP:
 		m.cur = clamp(m.cur-1, len(m.view))
-		return m.refreshPreview(), nil
+		return m.moved()
 	case tea.KeyDown, tea.KeyCtrlN:
 		m.cur = clamp(m.cur+1, len(m.view))
-		return m.refreshPreview(), nil
+		return m.moved()
 	case tea.KeyBackspace:
 		if r := []rune(m.query); len(r) > 0 {
 			m.query = string(r[:len(r)-1])
 		}
-		return m.applyFilter().refreshPreview(), nil
+		return m.applyFilter().moved()
 	case tea.KeyCtrlU:
 		m.query = ""
-		return m.applyFilter().refreshPreview(), nil
+		return m.applyFilter().moved()
 	case tea.KeySpace:
 		m.query += " "
-		return m.applyFilter().refreshPreview(), nil
+		return m.applyFilter().moved()
 	case tea.KeyRunes:
 		m.query += string(msg.Runes)
-		return m.applyFilter().refreshPreview(), nil
+		return m.applyFilter().moved()
 	}
 	return m, nil
 }
@@ -164,7 +202,7 @@ func (m model) updateLayout(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "esc", "h": // back to the palette
 		m.mode = ""
-		return m.refreshPreview(), nil
+		return m.moved()
 	case "enter", "l":
 		if m.layCur >= 0 && m.layCur < len(m.layouts) {
 			_ = paletteBuild(m.layouts[m.layCur], m.layDir)
@@ -172,10 +210,10 @@ func (m model) updateLayout(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "j", "down", "ctrl+n":
 		m.layCur = clamp(m.layCur+1, len(m.layouts))
-		return m.refreshPreview(), nil
+		return m.moved()
 	case "k", "up", "ctrl+p":
 		m.layCur = clamp(m.layCur-1, len(m.layouts))
-		return m.refreshPreview(), nil
+		return m.moved()
 	}
 	return m, nil
 }
