@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 )
 
@@ -38,6 +39,7 @@ type kwin struct {
 	IsActive            bool       `json:"is_active"`
 	AtPrompt            bool       `json:"at_prompt"`
 	LastExit            int        `json:"last_cmd_exit_status"`
+	LastFocusedAt       float64    `json:"last_focused_at"`
 }
 
 type procInfo struct {
@@ -89,11 +91,12 @@ func moveToNewOSWindow(srcWin int) error {
 
 // openTab is one open project tab (its active window) — a jump target.
 type openTab struct {
-	winID  int
-	tabID  int
-	cwd    string
-	title  string
-	status string // focused | running | idle | failed
+	winID     int
+	tabID     int
+	cwd       string
+	title     string
+	status    string  // focused | running | idle | failed
+	focusedAt float64 // last_focused_at, for recency ordering
 }
 
 // openTabs flattens `kitty @ ls` to one jump target per tab (the active window), skipping
@@ -133,11 +136,12 @@ func openTabs() ([]openTab, map[string]bool, error) {
 			case !a.AtPrompt:
 				st = "running"
 			}
-			tabs = append(tabs, openTab{winID: a.ID, tabID: t.ID, cwd: a.CWD, title: t.Title, status: st})
+			tabs = append(tabs, openTab{winID: a.ID, tabID: t.ID, cwd: a.CWD, title: t.Title, status: st, focusedAt: a.LastFocusedAt})
 			if a.CWD != "" {
 				cwds[a.CWD] = true
 			}
 		}
 	}
+	sort.SliceStable(tabs, func(i, j int) bool { return tabs[i].focusedAt > tabs[j].focusedAt }) // most-recent first
 	return tabs, cwds, nil
 }

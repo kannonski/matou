@@ -18,63 +18,123 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateLayout(msg)
 		case "rename":
 			return m.updateRename(msg)
+		case "filter":
+			return m.updateFilter(msg)
 		default:
-			return m.updatePalette(msg)
+			return m.updateLabel(msg)
 		}
 	}
 	return m, nil
 }
 
-// updatePalette: type to filter; arrows / ctrl-n,p move; enter acts; ctrl-s/x/r/d are the
-// per-row actions (move the source pane · close tab · rename tab · prune from zoxide).
-func (m model) updatePalette(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC, tea.KeyEsc:
+// actOn performs a row's primary action: jump (open) · move (newtab/newwin) · pick-a-layout
+// (relay/project). Used by both a label tap and enter.
+func (m model) actOn(idx int) (model, tea.Cmd) {
+	m.cur = clamp(idx, len(m.view))
+	it, ok := m.sel()
+	if !ok {
+		return m, nil
+	}
+	switch it.kind {
+	case "open":
+		_ = focusWindow(it.winID)
 		return m, tea.Quit
-	case tea.KeyEnter:
-		if it, ok := m.sel(); ok {
-			switch it.kind {
-			case "open":
-				_ = focusWindow(it.winID)
-				return m, tea.Quit
-			case "newtab":
-				if m.source > 0 {
-					_ = moveToNewTab(m.source)
-				}
-				return m, tea.Quit
-			case "newwin":
-				if m.source > 0 {
-					_ = moveToNewOSWindow(m.source)
-				}
-				return m, tea.Quit
-			default: // relay / project → pick a layout for that dir
-				m.mode, m.layDir, m.layCur = "layout", it.dir, 0
-				m.layouts = paletteNames()
-				return m.refreshPreview(), nil
-			}
+	case "newtab":
+		if m.source > 0 {
+			_ = moveToNewTab(m.source)
 		}
+		return m, tea.Quit
+	case "newwin":
+		if m.source > 0 {
+			_ = moveToNewOSWindow(m.source)
+		}
+		return m, tea.Quit
+	default: // relay / project → pick a layout for that dir
+		m.mode, m.layDir, m.layCur = "layout", it.dir, 0
+		m.layouts = paletteNames()
+		return m.refreshPreview(), nil
+	}
+}
+
+// rowAction handles the per-row action keys (move / kill / rename / prune), shared by the
+// label and filter modes. handled=true means the key was an action key (consumed).
+func (m model) rowAction(msg tea.KeyMsg) (model, tea.Cmd, bool) {
+	switch msg.Type {
 	case tea.KeyCtrlS: // move the source pane into the highlighted open tab
 		if m.source > 0 {
 			if it, ok := m.sel(); ok && it.kind == "open" {
 				_ = moveToTab(m.source, it.tabID)
-				return m, tea.Quit
+				return m, tea.Quit, true
 			}
 		}
+		return m, nil, true
 	case tea.KeyCtrlX: // close the highlighted open tab
 		if it, ok := m.sel(); ok && it.kind == "open" {
 			_ = closeTab(it.tabID)
-			return m.reload(), nil
+			return m.reload(), nil, true
 		}
+		return m, nil, true
 	case tea.KeyCtrlD: // prune a project from zoxide
 		if it, ok := m.sel(); ok && it.kind == "project" {
 			_ = zoxideRemove(it.dir)
-			return m.reload(), nil
+			return m.reload(), nil, true
 		}
+		return m, nil, true
 	case tea.KeyCtrlR: // rename the highlighted open tab
 		if it, ok := m.sel(); ok && it.kind == "open" {
 			m.mode, m.rtab, m.rinput = "rename", it.tabID, it.title
-			return m, nil
+			return m, nil, true
 		}
+		return m, nil, true
+	}
+	return m, nil, false
+}
+
+// updateLabel (default mode): tap a label key to jump · arrows + enter for the cursor ·
+// "/" to search · ctrl-s/x/r/d row actions.
+func (m model) updateLabel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if nm, cmd, ok := m.rowAction(msg); ok {
+		return nm, cmd
+	}
+	switch msg.Type {
+	case tea.KeyCtrlC, tea.KeyEsc:
+		return m, tea.Quit
+	case tea.KeyEnter:
+		return m.actOn(m.cur)
+	case tea.KeyUp, tea.KeyCtrlP:
+		m.cur = clamp(m.cur-1, len(m.view))
+		return m.refreshPreview(), nil
+	case tea.KeyDown, tea.KeyCtrlN:
+		m.cur = clamp(m.cur+1, len(m.view))
+		return m.refreshPreview(), nil
+	case tea.KeyRunes:
+		if len(msg.Runes) == 1 {
+			r := msg.Runes[0]
+			if r == '/' { // drop into search
+				m.mode, m.query = "filter", ""
+				return m.applyFilter().refreshPreview(), nil
+			}
+			if idx := strings.IndexRune(labelKeys, r); idx >= 0 && idx < len(m.view) {
+				return m.actOn(idx)
+			}
+		}
+	}
+	return m, nil
+}
+
+// updateFilter: type to narrow, arrows + enter to act, esc back to labels.
+func (m model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if nm, cmd, ok := m.rowAction(msg); ok {
+		return nm, cmd
+	}
+	switch msg.Type {
+	case tea.KeyCtrlC:
+		return m, tea.Quit
+	case tea.KeyEsc:
+		m.mode, m.query = "", ""
+		return m.applyFilter().refreshPreview(), nil
+	case tea.KeyEnter:
+		return m.actOn(m.cur)
 	case tea.KeyUp, tea.KeyCtrlP:
 		m.cur = clamp(m.cur-1, len(m.view))
 		return m.refreshPreview(), nil

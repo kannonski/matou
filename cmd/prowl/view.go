@@ -9,18 +9,19 @@ import (
 )
 
 var (
-	promptSt = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	selSt    = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	dim      = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	dirSt    = lipgloss.NewStyle().Foreground(lipgloss.Color("180"))
-	openSt   = lipgloss.NewStyle().Foreground(lipgloss.Color("117"))
-	relaySt  = lipgloss.NewStyle().Foreground(lipgloss.Color("183"))
-	focG     = lipgloss.NewStyle().Foreground(lipgloss.Color("120"))
-	runG     = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	failG    = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	errSt    = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	statusSt = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
-	borderC  = lipgloss.Color("238")
+	promptSt   = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+	selSt      = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+	labelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
+	dim        = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	dirSt      = lipgloss.NewStyle().Foreground(lipgloss.Color("180"))
+	openSt     = lipgloss.NewStyle().Foreground(lipgloss.Color("117"))
+	relaySt    = lipgloss.NewStyle().Foreground(lipgloss.Color("183"))
+	focG       = lipgloss.NewStyle().Foreground(lipgloss.Color("120"))
+	runG       = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	failG      = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+	errSt      = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+	statusSt   = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
+	borderC    = lipgloss.Color("238")
 )
 
 func trunc(s string, n int) string {
@@ -58,31 +59,37 @@ func windowRange(cur, n, h int) (int, int) {
 
 func (m model) leftRow(viewIdx, leftW int, selected bool) string {
 	it := m.all[m.view[viewIdx]]
-	cur := "  "
-	if selected {
-		cur = selSt.Render("▸ ")
-	}
 	avail := leftW - 4
-	var g, lbl string
+	// lead: the jump label (label mode) or a cursor marker (filter mode)
+	lead := "  "
+	if m.mode == "" {
+		if k := labelFor(viewIdx); k != "" {
+			lead = labelStyle.Render(k) + " "
+		}
+	} else if selected {
+		lead = selSt.Render("▸ ")
+	}
+	var g, name string
+	nameSt := dirSt
 	switch it.kind {
 	case "relay":
-		g = relaySt.Render("↻")
-		lbl = relaySt.Render(trunc("relayout · "+filepath.Base(it.dir), avail))
+		g, name, nameSt = relaySt.Render("↻"), "relayout · "+filepath.Base(it.dir), relaySt
 	case "open":
 		g = glyph(it.status)
-		name := filepath.Base(it.dir)
+		name = filepath.Base(it.dir)
 		if name == "" || name == "/" || name == "." {
 			name = it.title
 		}
-		lbl = openSt.Render(trunc(name, avail))
+		nameSt = openSt
 	case "newtab", "newwin": // move-the-source-pane targets
-		g = relaySt.Render("+")
-		lbl = relaySt.Render(trunc(it.title, avail))
-	default: // project — "+" signals "open a new tab here" (vs ○/● = jump to an open one)
-		g = dim.Render("+")
-		lbl = dirSt.Render(trunc(filepath.Base(it.dir), avail))
+		g, name, nameSt = relaySt.Render("+"), it.title, relaySt
+	default: // project — "+" = open a new tab here (vs ○/● = jump to an open one)
+		g, name = dim.Render("+"), filepath.Base(it.dir)
 	}
-	return cur + g + " " + lbl
+	if selected {
+		nameSt = selSt
+	}
+	return lead + g + " " + nameSt.Render(trunc(name, avail))
 }
 
 func (m model) rightContent(rightW, bodyH int) string {
@@ -122,13 +129,16 @@ func (m model) View() string {
 	case "rename":
 		prompt = promptSt.Render("rename tab ❯ ") + m.rinput + selSt.Render("▌")
 		footer = dim.Render("  enter save · esc cancel")
-	default:
+	case "filter":
 		prompt = promptSt.Render("❯ ") + m.query + selSt.Render("▌") +
 			dim.Render(fmt.Sprintf("   %d", len(m.view)))
+		footer = dim.Render("  ↵ go · ^s move · ^x kill · ^r rename · ^d prune · esc")
+	default: // label mode
+		prompt = promptSt.Render("prowl") + dim.Render("   tap a key to jump   ·   / search")
 		if m.status != "" {
 			prompt += dim.Render("   ") + statusSt.Render(m.status)
 		}
-		footer = dim.Render("  ↵ jump/open · ^s move · ^x kill · ^r rename · ^d prune · esc")
+		footer = dim.Render("  key/↵ go · ^s move · ^x kill · ^r rename · ^d prune · esc")
 	}
 
 	// left column

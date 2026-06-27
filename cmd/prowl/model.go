@@ -6,6 +6,18 @@ import (
 	"strings"
 )
 
+// labelKeys are the jump-label keys, easiest first (home row → top → bottom). Row i in the
+// filtered view gets labelKeys[i]; press it to jump straight to that row.
+const labelKeys = "asdfghjklqwertyuiopzxcvbnm"
+
+// labelFor returns the jump label for a view position ("" past the alphabet).
+func labelFor(viewIdx int) string {
+	if viewIdx >= 0 && viewIdx < len(labelKeys) {
+		return string(labelKeys[viewIdx])
+	}
+	return ""
+}
+
 // item is one palette row.
 type item struct {
 	kind   string // "relay" | "open" | "project" | "newtab" | "newwin"
@@ -57,18 +69,19 @@ func (m model) reload() model {
 	}
 	m.err = ""
 	var all []item
-	if cwd, e := os.Getwd(); e == nil && cwd != "" {
-		all = append(all, item{kind: "relay", dir: cwd})
-	}
+	// recent open tabs first (so the easiest labels jump to where you most likely want to go)
 	for _, t := range tabs {
 		all = append(all, item{kind: "open", dir: t.cwd, winID: t.winID, tabID: t.tabID, title: t.title, status: t.status})
+	}
+	if cwd, e := os.Getwd(); e == nil && cwd != "" {
+		all = append(all, item{kind: "relay", dir: cwd})
 	}
 	if m.source > 0 { // move targets — only meaningful when launched with a source window
 		all = append(all,
 			item{kind: "newtab", title: "move the pane here → a new tab"},
 			item{kind: "newwin", title: "move the pane here → a new OS window"})
 	}
-	for _, d := range projectDirs(openCwds) {
+	for _, d := range projectDirs(openCwds) { // zoxide frecency order
 		all = append(all, item{kind: "project", dir: d})
 	}
 	m.all = all
