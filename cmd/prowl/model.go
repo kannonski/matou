@@ -6,18 +6,6 @@ import (
 	"strings"
 )
 
-// labelKeys are the jump-label keys, easiest first (home row → top → bottom). Row i in the
-// filtered view gets labelKeys[i]; press it to jump straight to that row.
-const labelKeys = "asdfghjklqwertyuiopzxcvbnm"
-
-// labelFor returns the jump label for a view position ("" past the alphabet).
-func labelFor(viewIdx int) string {
-	if viewIdx >= 0 && viewIdx < len(labelKeys) {
-		return string(labelKeys[viewIdx])
-	}
-	return ""
-}
-
 // item is one palette row.
 type item struct {
 	kind    string // "relay" | "open" | "project" | "newtab" | "newwin"

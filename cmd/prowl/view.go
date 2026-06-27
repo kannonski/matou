@@ -13,21 +13,20 @@ import (
 func fg(hex string) lipgloss.Style { return lipgloss.NewStyle().Foreground(lipgloss.Color(hex)) }
 
 var (
-	promptSt   = fg("#cba6f7").Bold(true) // mauve
-	selSt      = fg("#f5c2e7").Bold(true) // pink
-	labelStyle = fg("#f9e2af").Bold(true) // yellow
-	dim        = fg("#6c7086")            // overlay0
-	metaSt     = fg("#7f849c")            // overlay1 — inline cmd/git
-	dirSt      = fg("#a6adc8")            // subtext0 — project names
-	openSt     = fg("#89b4fa")            // blue — open tab names
-	relaySt    = fg("#cba6f7")            // mauve — relay / move targets
-	focG       = fg("#a6e3a1")            // green
-	runG       = fg("#fab387")            // peach
-	failG      = fg("#f38ba8")            // red
-	errSt      = fg("#f38ba8")
-	statusSt   = fg("#f5c2e7")
-	barStyle   = lipgloss.NewStyle().Background(lipgloss.Color("#45475a")).Foreground(lipgloss.Color("#cdd6f4"))
-	borderC    = lipgloss.Color("#585b70")
+	promptSt = fg("#cba6f7").Bold(true) // mauve
+	selSt    = fg("#f5c2e7").Bold(true) // pink
+	dim      = fg("#6c7086")            // overlay0
+	metaSt   = fg("#7f849c")            // overlay1 — inline cmd/git
+	dirSt    = fg("#a6adc8")            // subtext0 — project names
+	openSt   = fg("#89b4fa")            // blue — open tab names
+	relaySt  = fg("#cba6f7")            // mauve — relay / move targets
+	focG     = fg("#a6e3a1")            // green
+	runG     = fg("#fab387")            // peach
+	failG    = fg("#f38ba8")            // red
+	errSt    = fg("#f38ba8")
+	statusSt = fg("#f5c2e7")
+	barStyle = lipgloss.NewStyle().Background(lipgloss.Color("#45475a")).Foreground(lipgloss.Color("#cdd6f4"))
+	borderC  = lipgloss.Color("#585b70")
 )
 
 func trunc(s string, n int) string {
@@ -139,7 +138,6 @@ func windowRange(cur, n, h int) (int, int) {
 
 func (m model) leftRow(viewIdx, leftW int, selected bool) string {
 	it := m.all[m.view[viewIdx]]
-	k := labelFor(viewIdx)
 	gr := glyphRune(it)
 	name := nameOf(it)
 	meta := it.meta()
@@ -155,23 +153,15 @@ func (m model) leftRow(viewIdx, leftW int, selected bool) string {
 	}
 	name = trunc(name, nameMax)
 
-	if selected { // a single-style highlight bar (no per-segment ANSI to break the bg)
-		lead := "  "
-		if k != "" {
-			lead = k + " "
-		}
-		line := lead + gr + " " + name
+	if selected { // single-style highlight bar (no per-segment ANSI to break the bg) = the cursor
+		line := "  " + gr + " " + name
 		if meta != "" {
 			line += "  " + meta
 		}
 		return barStyle.Width(leftW).Render(line)
 	}
 
-	lead := "  "
-	if m.mode == "" && k != "" {
-		lead = labelStyle.Render(k) + " "
-	}
-	out := lead + glyphStyle(it).Render(gr) + " " + nameStyle(it).Render(name)
+	out := "  " + glyphStyle(it).Render(gr) + " " + nameStyle(it).Render(name)
 	if meta != "" {
 		out += "  " + metaSt.Render(meta)
 	}
@@ -219,12 +209,12 @@ func (m model) View() string {
 		prompt = promptSt.Render("❯ ") + m.query + selSt.Render("▌") +
 			dim.Render(fmt.Sprintf("   %d", len(m.view)))
 		footer = dim.Render("  ↵ go · ^s move · ^x kill · ^r rename · ^d prune · esc")
-	default: // label mode
-		prompt = promptSt.Render("prowl") + dim.Render("   tap a key to jump   ·   / search")
+	default: // nav (vim)
+		prompt = promptSt.Render("prowl") + dim.Render("   j/k move · l open · / search · q quit")
 		if m.status != "" {
 			prompt += dim.Render("   ") + statusSt.Render(m.status)
 		}
-		footer = dim.Render("  key/↵ go · ^s move · ^x kill · ^r rename · ^d prune · esc")
+		footer = dim.Render("  l/↵ open · h back · ^s move · ^x kill · ^r rename · ^d prune")
 	}
 
 	// left column

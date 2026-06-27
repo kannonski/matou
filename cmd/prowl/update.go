@@ -21,7 +21,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "filter":
 			return m.updateFilter(msg)
 		default:
-			return m.updateLabel(msg)
+			return m.updateNav(msg)
 		}
 	}
 	return m, nil
@@ -90,34 +90,33 @@ func (m model) rowAction(msg tea.KeyMsg) (model, tea.Cmd, bool) {
 	return m, nil, false
 }
 
-// updateLabel (default mode): tap a label key to jump · arrows + enter for the cursor ·
-// "/" to search · ctrl-s/x/r/d row actions.
-func (m model) updateLabel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+// updateNav (default mode): vim hjkl navigation. j/k move · l/enter open/drill · h back
+// out · g/G top/bottom · "/" search · ctrl-s/x/r/d row actions. No typing-to-filter here —
+// letters are navigation; search lives behind "/".
+func (m model) updateNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if nm, cmd, ok := m.rowAction(msg); ok {
 		return nm, cmd
 	}
-	switch msg.Type {
-	case tea.KeyCtrlC, tea.KeyEsc:
+	switch msg.String() {
+	case "q", "esc", "ctrl+c", "h":
 		return m, tea.Quit
-	case tea.KeyEnter:
-		return m.actOn(m.cur)
-	case tea.KeyUp, tea.KeyCtrlP:
-		m.cur = clamp(m.cur-1, len(m.view))
-		return m.refreshPreview(), nil
-	case tea.KeyDown, tea.KeyCtrlN:
+	case "j", "down", "ctrl+n":
 		m.cur = clamp(m.cur+1, len(m.view))
 		return m.refreshPreview(), nil
-	case tea.KeyRunes:
-		if len(msg.Runes) == 1 {
-			r := msg.Runes[0]
-			if r == '/' { // drop into search
-				m.mode, m.query = "filter", ""
-				return m.applyFilter().refreshPreview(), nil
-			}
-			if idx := strings.IndexRune(labelKeys, r); idx >= 0 && idx < len(m.view) {
-				return m.actOn(idx)
-			}
-		}
+	case "k", "up", "ctrl+p":
+		m.cur = clamp(m.cur-1, len(m.view))
+		return m.refreshPreview(), nil
+	case "g", "home":
+		m.cur = 0
+		return m.refreshPreview(), nil
+	case "G", "end":
+		m.cur = clamp(1<<30, len(m.view))
+		return m.refreshPreview(), nil
+	case "l", "enter":
+		return m.actOn(m.cur)
+	case "/":
+		m.mode, m.query = "filter", ""
+		return m.applyFilter().refreshPreview(), nil
 	}
 	return m, nil
 }
@@ -160,22 +159,22 @@ func (m model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateLayout(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC:
+	switch msg.String() {
+	case "ctrl+c", "q":
 		return m, tea.Quit
-	case tea.KeyEsc:
+	case "esc", "h": // back to the palette
 		m.mode = ""
 		return m.refreshPreview(), nil
-	case tea.KeyEnter:
+	case "enter", "l":
 		if m.layCur >= 0 && m.layCur < len(m.layouts) {
 			_ = paletteBuild(m.layouts[m.layCur], m.layDir)
 			return m, tea.Quit
 		}
-	case tea.KeyUp, tea.KeyCtrlP:
-		m.layCur = clamp(m.layCur-1, len(m.layouts))
-		return m.refreshPreview(), nil
-	case tea.KeyDown, tea.KeyCtrlN:
+	case "j", "down", "ctrl+n":
 		m.layCur = clamp(m.layCur+1, len(m.layouts))
+		return m.refreshPreview(), nil
+	case "k", "up", "ctrl+p":
+		m.layCur = clamp(m.layCur-1, len(m.layouts))
 		return m.refreshPreview(), nil
 	}
 	return m, nil
