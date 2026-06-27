@@ -208,9 +208,9 @@ func (m model) View() string {
 		if m.moveSrc == 0 { // stage A — pick the pane to move
 			prompt = promptSt.Render("move which pane?")
 			footer = dim.Render("j/k pick · ↵ choose this pane · esc cancel")
-		} else { // stage B — pick a destination
-			prompt = promptSt.Render("move " + m.moveSrcName + " →")
-			footer = dim.Render("↵ into this tab · M new tab · W new OS window · esc back")
+		} else { // stage B — pick a destination tab
+			prompt = promptSt.Render("move " + m.moveSrcName + " → which tab?")
+			footer = dim.Render("↵ move into this tab · esc back")
 		}
 	case "filter":
 		prompt = promptSt.Render("❯ ") + m.query + selSt.Render("▌") +

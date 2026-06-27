@@ -73,21 +73,13 @@ func setTabTitle(tabID int, title string) error {
 	return exec.Command("kitty", "@", "set-tab-title", "--match", "id:"+strconv.Itoa(tabID), title).Run()
 }
 
-// moveToTab detaches the source window into an existing tab, then focuses that tab.
+// moveToTab detaches a window into an existing tab, then focuses that tab.
 func moveToTab(srcWin, tabID int) error {
 	if err := exec.Command("kitty", "@", "detach-window",
 		"--match", "id:"+strconv.Itoa(srcWin), "--target-tab", "id:"+strconv.Itoa(tabID)).Run(); err != nil {
 		return err
 	}
 	return exec.Command("kitty", "@", "focus-tab", "--match", "id:"+strconv.Itoa(tabID)).Run()
-}
-
-func moveToNewTab(srcWin int) error {
-	return exec.Command("kitty", "@", "detach-window", "--match", "id:"+strconv.Itoa(srcWin), "--target-tab", "new").Run()
-}
-
-func moveToNewOSWindow(srcWin int) error {
-	return exec.Command("kitty", "@", "detach-window", "--match", "id:"+strconv.Itoa(srcWin)).Run()
 }
 
 // openTab is one open project tab (its active window) — a jump target.

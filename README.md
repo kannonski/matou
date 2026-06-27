@@ -19,7 +19,7 @@ The list is just jump/open targets:
   your `~/Project/{gitlab,github}` roots, deduped against what's open → `l` picks a layout.
 
 Actions live on keys, not rows: `.` relayout the current dir · `m` move a pane (pick the
-pane, then drop it into a tab, a new tab, or a new OS window).
+pane, then drop it into a destination tab).
 
 The right pane previews the selection: git branch + change count + listing for a directory,
 or the layout sketch when you're choosing one.
@@ -32,7 +32,7 @@ Vim navigation; search lives behind `/`.
 |-----|--------|
 | `j`/`k` · `↑`/`↓` | move (`g`/`G` top/bottom) |
 | `l` / `enter` | open: jump to a tab · pick-a-layout for a dir · move (move-targets) |
-| `m` | move a pane — pick the pane, then `↵` into a tab · `M` new tab · `W` new OS window · `esc` back |
+| `m` | move a pane — pick the pane, then `↵` to drop it into a destination tab (`esc` steps back) |
 | `.` | relayout the current dir (layout picker for where you launched) |
 | `x` | close the highlighted tab |
 | `r` | rename the highlighted tab |

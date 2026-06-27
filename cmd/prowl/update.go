@@ -219,16 +219,6 @@ func (m model) updateMove(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		_ = moveToTab(m.moveSrc, it.tabID) // stage B: into the highlighted tab
 		return m, tea.Quit
-	case "M": // stage B: to a new tab
-		if m.moveSrc != 0 {
-			_ = moveToNewTab(m.moveSrc)
-			return m, tea.Quit
-		}
-	case "W": // stage B: to a new OS window
-		if m.moveSrc != 0 {
-			_ = moveToNewOSWindow(m.moveSrc)
-			return m, tea.Quit
-		}
 	}
 	return m, nil
 }
