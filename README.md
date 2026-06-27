@@ -71,27 +71,16 @@ repo with an LLM (falls back to `git log` when none is available).
 go install github.com/kannonski/prowl/cmd/prowl@latest
 ```
 
-To bind it (and capture the source window for `ctrl-s`), launch via a tiny kitten:
-
-```python
-# ~/.config/kitty/prowl.py
-import os
-from kittens.tui.handler import result_handler
-def main(args): pass
-@result_handler(no_ui=True)
-def handle_result(args, answer, target_window_id, boss):
-    w = boss.active_window
-    if w:
-        boss.call_remote_control(w, ("launch", "--type=tab", "--cwd=current",
-            "--title=prowl", os.path.expanduser("~/.local/bin/prowl"), "--source", str(w.id)))
-```
+Bind it to a self-toggling overlay (no kitten — pure Go). The `--var prowl=1` tag lets
+prowl detect a sibling on startup and dismiss it on a second press:
 
 ```conf
-# kitty.conf
-map ctrl+shift+o kitten prowl.py
+# kitty.conf  (needs allow_remote_control + listen_on)
+map ctrl+shift+o launch --type=overlay --cwd=current --title=prowl --var prowl=1 ~/.local/bin/prowl
 ```
 
-Run `prowl` directly to try it without the launcher (move-pane is then disabled).
+`--cwd=current` gives the relayout key (`.`) its directory. Run `prowl` directly to try it
+without binding.
 
 ## License
 
