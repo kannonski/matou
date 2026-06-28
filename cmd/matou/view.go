@@ -245,7 +245,9 @@ func (m model) agentPanel() string {
 	footer := dim.Render(trunc(f, innerW))
 
 	content := header + "\n" + input + "\n" + rule + "\n" + strings.Join(body, "\n") + "\n" + footer
-	box := lipgloss.NewStyle().Width(innerW).Padding(0, 1).
+	// Width is the block width incl. padding, so target innerW+2 → the text area is exactly
+	// innerW (what rule/body are sized to); otherwise padding steals 2 cols and content wraps.
+	box := lipgloss.NewStyle().Width(innerW + 2).Padding(0, 1).
 		Border(lipgloss.RoundedBorder()).BorderForeground(borderC).Render(content)
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
 }
