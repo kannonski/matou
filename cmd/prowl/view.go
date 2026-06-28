@@ -266,7 +266,7 @@ func (m model) layoutRow(i, leftW int, selected bool) string {
 	name := m.layouts[i]
 	nm := trunc(name, nameW)
 	nm += strings.Repeat(" ", max(0, nameW-len([]rune(nm))))
-	desc := trunc(m.layoutDescs[name], max(1, leftW-4-nameW)) // after "  " + name + " "
+	desc := trunc(m.layoutDefs[name].caption, max(1, leftW-4-nameW)) // after "  " + name + " "
 
 	if selected { // single-style highlight bar (= the cursor)
 		return barStyle.Width(leftW).Render("  " + nm + " " + desc)
@@ -307,8 +307,13 @@ func (m model) leftRow(viewIdx, leftW int, selected bool) string {
 // the dir's REPO + FILES (built in dirPreview). Returns exactly bodyH lines (lipgloss.Height
 // only pads, never truncates — so we cap here or a long listing overruns the frame).
 func (m model) rightContent(rightW, bodyH int) string {
-	if m.mode == "layout" { // a layout sketch — shown as-is, no sections
-		return clampLines(m.preview, rightW, bodyH)
+	if m.mode == "layout" { // the selected layout's live sketch, sized to the pane
+		if m.layCur >= 0 && m.layCur < len(m.layouts) {
+			if L, ok := m.layoutDefs[m.layouts[m.layCur]]; ok {
+				return layoutSketch(L, rightW, bodyH)
+			}
+		}
+		return ""
 	}
 	var secs []string
 	if it, ok := m.sel(); ok && it.dir != "" {

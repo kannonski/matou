@@ -57,9 +57,18 @@ func (m model) actOn(idx int) (model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	// project → pick a layout for that dir
-	m.mode, m.layDir, m.layCur = "layout", it.dir, 0
-	m.layouts, m.layoutDescs = paletteNames(), paletteDescs()
-	return m.moved()
+	return m.enterLayoutMode(it.dir).moved()
+}
+
+// enterLayoutMode opens the layout picker for dir, loading layouts from palette.layouts.
+func (m model) enterLayoutMode(dir string) model {
+	m.mode, m.layDir, m.layCur = "layout", dir, 0
+	m.layouts, m.layoutDefs = nil, map[string]layout{}
+	for _, L := range loadLayouts() {
+		m.layouts = append(m.layouts, L.name)
+		m.layoutDefs[L.name] = L
+	}
+	return m
 }
 
 // updateNav (default mode): vim hjkl navigation. j/k move · l/enter open/drill · h back
@@ -110,9 +119,7 @@ func (m model) updateNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.applyFilter().moved()
 	case ".": // relayout the current dir → pick a layout
 		if m.cwd != "" {
-			m.mode, m.layDir, m.layCur = "layout", m.cwd, 0
-			m.layouts, m.layoutDescs = paletteNames(), paletteDescs()
-			return m.moved()
+			return m.enterLayoutMode(m.cwd).moved()
 		}
 	case "x": // close the highlighted tab
 		if it, ok := m.sel(); ok && it.kind == "open" {
@@ -173,7 +180,9 @@ func (m model) updateLayout(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.moved()
 	case "enter", "l":
 		if m.layCur >= 0 && m.layCur < len(m.layouts) {
-			_ = paletteBuild(m.layouts[m.layCur], m.layDir)
+			if L, ok := m.layoutDefs[m.layouts[m.layCur]]; ok {
+				layoutBuild(L, m.layDir)
+			}
 			return m, tea.Quit
 		}
 	case "j", "down", "ctrl+n":

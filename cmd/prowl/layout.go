@@ -2,61 +2,10 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
-
-// palette.py is the user's layout engine (names / sketch / build). prowl reuses it rather
-// than reinventing layouts. Override the path with $PROWL_PALETTE.
-func palettePath() string {
-	if p := os.Getenv("PROWL_PALETTE"); p != "" {
-		return p
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "kitty", "palette.py")
-}
-
-func paletteNames() []string {
-	out, err := exec.Command("python3", palettePath(), "names").Output()
-	if err != nil {
-		return nil
-	}
-	var names []string
-	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if l = strings.TrimSpace(l); l != "" {
-			names = append(names, l)
-		}
-	}
-	return names
-}
-
-// paletteDescs returns layout name → caption (e.g. "dev" → "editor · shell · lazygit"), for
-// the picker's self-describing list. Empty map if the palette is too old to support `descs`.
-func paletteDescs() map[string]string {
-	out, err := exec.Command("python3", palettePath(), "descs").Output()
-	if err != nil {
-		return map[string]string{}
-	}
-	descs := map[string]string{}
-	for _, l := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
-		if name, cap, ok := strings.Cut(l, "\t"); ok {
-			descs[name] = cap
-		}
-	}
-	return descs
-}
-
-func paletteSketch(name string) string {
-	out, _ := exec.Command("python3", palettePath(), "sketch", name).Output()
-	return string(out)
-}
-
-// paletteBuild lays out the panes for `name` in a new tab cwd'd to `dir`.
-func paletteBuild(name, dir string) error {
-	return exec.Command("python3", palettePath(), "build", name, dir).Run()
-}
 
 // dirPreview is the right-pane preview for a directory, in two labelled sections: REPO (git
 // branch + change count) and FILES (a plain listing). Section heads are styled; the bodies

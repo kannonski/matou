@@ -1,6 +1,6 @@
 // prowl — a flat fuzzy palette for kitty: jump to an open project tab, or open a directory
 // (zoxide + your ~/Project roots) in a chosen layout, with a live preview and per-tab status
-// (focused · running · idle · failed). Reuses your palette.py layout engine. A remote-control
+// (focused · running · idle · failed). Layouts come from palette.layouts (TOML). A remote-control
 // client (not a kitten): run inside kitty with allow_remote_control + listen_on. Launched as
 // an overlay tagged user_var prowl=1; it self-toggles (closes a sibling prowl on startup), so
 // the bound key opens it once and dismisses it on a second press — no Python kitten needed.

@@ -52,10 +52,11 @@ to search the full set.
 ## Requirements
 
 - **kitty** with `allow_remote_control` + `listen_on` (so `kitty @` works).
-- A **layout engine** at `~/.config/kitty/palette.py` exposing `names` / `sketch <name>` /
-  `build <name> <dir>` (override the path with `$PROWL_PALETTE`). prowl reuses it rather than
-  reinventing layouts.
-- Optional: `zoxide` (project frecency), `git` + `ls` (previews).
+- A **layouts file** at `~/.config/kitty/palette.layouts` (TOML) defining your layouts.
+  prowl's built-in Go engine parses it, draws the preview sketch, and launches the panes — no
+  external script. Override the path with `$PROWL_LAYOUTS`. See
+  [`examples/palette.layouts`](examples/palette.layouts) for the format.
+- Optional: `zoxide` (project frecency, and `zoxide add` on build), `git` + `ls` (previews).
 
 ## Agent — `a` (optional)
 

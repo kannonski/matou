@@ -1,0 +1,55 @@
+# prowl layouts — the single source of truth for the layout picker.
+# Each [name] is one entry; prowl's Go engine reads this file to draw the preview
+# sketch AND to launch the real panes, so they can never drift.
+#
+#   shape    one of:
+#              single          one pane, full screen
+#              columns         N panes side by side
+#              rows            N panes stacked
+#              main+right      big main on the left  + one pane right   (= columns, 2)
+#              main+bottom     big main on top        + one pane below   (= rows, 2)
+#              main+rightstack main left  + the rest stacked on the right
+#              main+bottomrow  main top   + the rest in a row along the bottom
+#   panes    commands in order; the FIRST is the editor you land in.
+#            {dir} = the project directory. Quote commands with args ("npm run dev").
+#   ratio    size %, shape-specific (the leading panes; the rest share what's left):
+#              columns/main+right   widths     e.g. [60]      -> 60% | 40%
+#              rows/main+bottom     heights    e.g. [70]      -> 70% / 30%
+#              main+rightstack      [mainW, rightTopH]        e.g. [62, 50]
+#              main+bottomrow       [mainH, ...]
+#            optional -> equal splits.
+#   caption  one line shown under the preview.
+#   order    position in the picker (low first).
+
+[zsh]
+shape   = "single"
+panes   = ["zsh"]
+caption = "just a shell"
+order   = 0
+
+[dev]
+shape   = "main+rightstack"
+panes   = ["nvim {dir}", "zsh", "lazygit"]
+ratio   = [62, 50]
+caption = "editor · shell · lazygit"
+order   = 1
+
+[tf]
+shape   = "main+bottom"
+panes   = ["nvim {dir}", "zsh"]
+ratio   = [70]
+caption = "editor + shell below · terraform"
+order   = 2
+
+[k8s]
+shape   = "main+right"
+panes   = ["k9s", "zsh"]
+ratio   = [60]
+caption = "k9s · shell"
+order   = 3
+
+[claude]
+shape   = "single"
+panes   = ["claude --resume"]
+caption = "resume a Claude Code session here"
+order   = 4

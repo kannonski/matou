@@ -33,11 +33,11 @@ type model struct {
 	query string
 	cur   int // index into view
 
-	mode        string // "" palette | "layout" | "rename"
-	layouts     []string
-	layoutDescs map[string]string // layout name → caption, for the picker list
-	layCur      int
-	layDir      string // dir chosen to lay out
+	mode       string // "" palette | "layout" | "rename"
+	layouts    []string
+	layoutDefs map[string]layout // layout name → full def (caption + spec), for the picker
+	layCur     int
+	layDir     string // dir chosen to lay out
 
 	rtab   int    // tab being renamed
 	rinput string // rename input buffer
@@ -153,11 +153,7 @@ func (m model) sel() (item, bool) {
 // refreshPreview computes (and caches) the right-pane preview for the current selection.
 func (m model) refreshPreview() model {
 	if m.mode == "layout" {
-		if m.layCur >= 0 && m.layCur < len(m.layouts) {
-			m.preview = m.cached("layout:"+m.layouts[m.layCur], func() string { return paletteSketch(m.layouts[m.layCur]) })
-		} else {
-			m.preview = ""
-		}
+		m.preview = "" // the sketch is rendered live in rightContent, sized to the pane
 		return m
 	}
 	it, ok := m.sel()
