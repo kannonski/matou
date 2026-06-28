@@ -162,23 +162,30 @@ func (m model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// updateLayout drives the floating layout carousel: h/l (or j/k, arrows, tab) cycle through
+// the layouts (wrapping), enter builds the highlighted one, esc cancels back to the palette.
 func (m model) updateLayout(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	n := len(m.layouts)
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
-	case "esc", "h": // back to the palette
+	case "esc": // back to the palette
 		m.mode = ""
 		return m.moved()
-	case "enter", "l":
-		if m.layCur >= 0 && m.layCur < len(m.layouts) {
+	case "enter":
+		if m.layCur >= 0 && m.layCur < n {
 			_ = paletteBuild(m.layouts[m.layCur], m.layDir)
 			return m, tea.Quit
 		}
-	case "j", "down", "ctrl+n":
-		m.layCur = clamp(m.layCur+1, len(m.layouts))
+	case "l", "j", "right", "down", "ctrl+n", "tab":
+		if n > 0 {
+			m.layCur = (m.layCur + 1) % n
+		}
 		return m.moved()
-	case "k", "up", "ctrl+p":
-		m.layCur = clamp(m.layCur-1, len(m.layouts))
+	case "h", "k", "left", "up", "ctrl+p", "shift+tab":
+		if n > 0 {
+			m.layCur = (m.layCur - 1 + n) % n
+		}
 		return m.moved()
 	}
 	return m, nil
