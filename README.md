@@ -4,11 +4,66 @@ A **palette for [kitty](https://sw.kovidgoyal.net/kitty/)** — vim-navigated, o
 jump to an open project tab, or open a directory in a chosen layout. A remote-control client
 (it shells out to `kitty @`), not a kitten, so it's a normal Go TUI.
 
+## Demo
+
+*Plain text here; in a real [Nerd Font](https://www.nerdfonts.com/) kitty it's
+Catppuccin-colored with tool glyphs.*
+
+The palette — jump to an open tab, or open a project dir in a layout. Live
+per-tab status (`●` focused · `⏵` running · `○` idle), running cmd + git dirty,
+and a sectioned preview on the right:
+
 ```
-matou   j/k nav · l open · / search
-  ⏵ infra-base   nvim main *4 │ infra-base    main    4 changes
-  ○ scripts              zsh  │ Justfile  README.md  modules/  …
-  + ibm-helper                │
+╭────────────────────────────────────────────────────────────────────────╮
+│ matou   j/k nav · / search                                             │
+│ ────────────────────────────────────────────────────────────────────── │
+│   ● matou           nvim *2│ ▌ REPO                                    │
+│   ⏵ infra               k9s│ matou · main · 2 changes                  │
+│   ○ scripts             zsh│                                           │
+│   + dotfiles               │ ▌ FILES                                   │
+│   + umtls                  │ cmd                                       │
+│                            │ Dockerfile                                │
+│                            │ examples                                  │
+│                            │ .git                                      │
+│ ↵ jump · x close · r rename · m move · a ask · . relayout · / search … │
+╰────────────────────────────────────────────────────────────────────────╯
+```
+
+Pick a layout — its colored sketch previews live on the right:
+
+```
+╭────────────────────────────────────────────────────────────────────────╮
+│ layout for matou   ↵ build · esc back                                  │
+│ ────────────────────────────────────────────────────────────────────── │
+│   zsh     just a shell     │                                           │
+│   dev     editor · shell … │  ╭───────────────────────┬──────────────╮ │
+│   tf      editor + shell … │  │  nvim              │  zsh      │ │
+│   go      editor · two sh… │  │                       │              │ │
+│   docs    file explorer (… │  │ ~                     │ ❯            │ │
+│   k8s     k9s · shell      │  │ ~                     ├──────────────┤ │
+│   logs    k9s · logs (ste… │  │ ~                     │  lazygit  │ │
+│   claude  resume a Claude… │  │                       │              │ │
+│                            │  ╰───────────────────────┴──────────────╯ │
+│                            │                                           │
+│ j/k pick · l/↵ build · h back                                          │
+╰────────────────────────────────────────────────────────────────────────╯
+```
+
+Ask the agent about the selected project with `a` — async, scrollable, cached:
+
+```
+╭────────────────────────────────────────────────────────────────╮
+│ 🤖 matou                                                       │
+│ ❯ what does this build do?                                     │
+│ ────────────────────────────────────────────────────────────── │
+│ matou is a kitty palette in Go. It lists your open project     │
+│ tabs and recent project dirs; `l` jumps to a tab or opens a    │
+│ dir in a chosen layout. `a` asks an agent about the project.   │
+│                                                                │
+│                                                                │
+│                                                                │
+│ j/k scroll · ^d/^u half · g/G ends · i ask · esc               │
+╰────────────────────────────────────────────────────────────────╯
 ```
 
 The list is just jump/open targets:
