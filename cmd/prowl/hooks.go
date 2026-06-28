@@ -14,7 +14,7 @@ type agentMsg struct {
 	text  string
 }
 
-// agentCmd runs the agent hook for `?` in the background: `<hook> <dir> "<instruction>"`.
+// agentCmd runs the agent hook for `a` in the background: `<hook> <dir> "<instruction>"`.
 func agentCmd(dir, instr string) tea.Cmd {
 	parts := strings.Fields(agentHook)
 	if len(parts) == 0 {

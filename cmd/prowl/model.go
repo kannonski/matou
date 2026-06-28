@@ -50,15 +50,16 @@ type model struct {
 	preview string
 	cache   map[string]string // dir:/layout: → local preview text
 
-	// `?` agent: a floating panel over the palette
+	// `a` agent: a floating panel over the palette
 	agentInput   string            // instruction being typed
-	agentDir     string            // dir the agent acts on (captured when : is pressed)
+	agentDir     string            // dir the agent acts on (captured when `a` is pressed)
 	agentName    string            // panel title
 	agentResult  string            // the reply ("" = none yet)
 	agentWorking bool              // true while the hook runs (for the panel)
 	agentOff     int               // scroll offset in the reply
+	agentFocus   string            // panel focus: "input" (typing) | "read" (scrolling the answer)
 	replyCache   map[string]string // dir+\x00+instr → reply
-	workingDirs  map[string]bool   // dirs with a `?` query in flight (for the right pane)
+	workingDirs  map[string]bool   // dirs with a `a` query in flight (for the right pane)
 	lastInstr    map[string]string // dir → last instruction asked (its reply shows in the pane)
 
 	w, h   int

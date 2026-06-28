@@ -118,7 +118,7 @@ func (m model) navActions() string {
 	}
 	a = append(a, "m move")
 	if agentHook != "" {
-		a = append(a, "? ask")
+		a = append(a, "a ask")
 	}
 	if m.cwd != "" {
 		a = append(a, ". relayout")
@@ -127,10 +127,9 @@ func (m model) navActions() string {
 	return strings.Join(a, " · ")
 }
 
-// agentPanel renders the floating `?` agent panel — a centered box (solid backdrop) with the
-// instruction line, the reply (scrollable), over the palette.
-func (m model) agentPanel() string {
-	w, h := m.w, m.h
+// agentDims sizes the floating panel: content width and reply body height. Shared by the
+// renderer and the scroller (updateAgent) so half-page/page jumps match what's on screen.
+func agentDims(w, h int) (innerW, bodyH int) {
 	if w <= 0 {
 		w = 100
 	}
@@ -139,24 +138,45 @@ func (m model) agentPanel() string {
 	}
 	pw := max(40, min(w-8, 90))
 	ph := max(8, min(h-6, 24))
-	innerW := pw - 4
-	bodyH := max(1, ph-6)
+	return pw - 4, max(1, ph-6)
+}
+
+// agentPanel renders the floating `a` agent panel — a centered box (solid backdrop): the
+// question line (a live cursor while typing, dimmed while reading), the reply (scrollable in
+// READ focus, with a position indicator), and a focus-aware footer.
+func (m model) agentPanel() string {
+	w, h := m.w, m.h
+	if w <= 0 {
+		w = 100
+	}
+	if h <= 0 {
+		h = 30
+	}
+	innerW, bodyH := agentDims(w, h)
+	reading := m.agentFocus == "read"
 
 	header := promptSt.Render("🤖 " + trunc(m.agentName, innerW-3))
-	input := promptSt.Render("? ") + trunc(m.agentInput, innerW-3) + selSt.Render("▌")
+
+	qText := trunc(m.agentInput, innerW-3)
+	input := promptSt.Render("❯ ") + qText + selSt.Render("▌")
+	if reading { // de-emphasise the question; the cursor lives in the answer now
+		input = dim.Render("❯ " + qText)
+	}
 	rule := ruleSt.Render(strings.Repeat("─", innerW))
 
 	body := make([]string, bodyH)
+	total, off := 0, 0
 	switch {
 	case m.agentWorking:
 		body[0] = runG.Render("🤖 working…")
 	case m.agentResult == "":
-		body[0] = dim.Render("type an instruction, then enter")
+		body[0] = dim.Render("type a question, then enter")
 	default:
 		src := strings.Split(m.agentResult, "\n")
-		off := max(0, min(m.agentOff, len(src)-bodyH))
+		total = len(src)
+		off = max(0, min(m.agentOff, max(0, total-bodyH)))
 		for i := range bodyH {
-			if off+i < len(src) {
+			if off+i < total {
 				l := src[off+i]
 				if !strings.Contains(l, "\x1b") { // plain → safe to truncate
 					l = trunc(l, innerW)
@@ -165,7 +185,21 @@ func (m model) agentPanel() string {
 			}
 		}
 	}
-	footer := dim.Render("enter run · ↑↓ scroll · esc close")
+
+	// focus-aware footer + scroll position (built plain, dimmed once, so trunc stays safe)
+	var f string
+	switch {
+	case reading:
+		f = "j/k scroll · ^d/^u half · g/G ends · i ask · esc"
+	case m.agentResult != "":
+		f = "enter ask · tab read · esc close"
+	default:
+		f = "enter ask · esc close"
+	}
+	if total > bodyH {
+		f += fmt.Sprintf("   %d–%d/%d", off+1, min(off+bodyH, total), total)
+	}
+	footer := dim.Render(trunc(f, innerW))
 
 	content := header + "\n" + input + "\n" + rule + "\n" + strings.Join(body, "\n") + "\n" + footer
 	box := lipgloss.NewStyle().Width(innerW).Padding(0, 1).
@@ -210,8 +244,8 @@ func (m model) leftRow(viewIdx, leftW int, selected bool) string {
 	return out
 }
 
-// rightContent composes the right pane as clear sections: the ambient `?` agent teaser
-// (the question + at most 10 reply lines — the full answer is read in the `?` panel), then
+// rightContent composes the right pane as clear sections: the ambient `a` agent teaser
+// (the question + at most 10 reply lines — the full answer is read in the `a` panel), then
 // the dir's REPO + FILES (built in dirPreview). Returns exactly bodyH lines (lipgloss.Height
 // only pads, never truncates — so we cap here or a long listing overruns the frame).
 func (m model) rightContent(rightW, bodyH int) string {
@@ -238,7 +272,7 @@ func (m model) rightContent(rightW, bodyH int) string {
 }
 
 // agentSection is the right-pane agent teaser: the question + at most 10 reply lines. The
-// full, scrollable answer lives in the `?` panel (press `?` to read it).
+// full, scrollable answer lives in the `a` panel (press `a` to read it).
 func agentSection(question, reply string, w int) string {
 	const maxReply = 10
 	lines := strings.Split(strings.TrimRight(reply, "\n"), "\n")
@@ -248,7 +282,7 @@ func agentSection(question, reply string, w int) string {
 	}
 	body := strings.Join(lines, "\n")
 	if clipped {
-		body += "\n" + dim.Render("… press ? for the full answer")
+		body += "\n" + dim.Render("… press a for the full answer")
 	}
 	return sectionHead("AGENT") + "\n" + promptSt.Render(trunc("🤖 "+question, w)) + "\n" + body
 }

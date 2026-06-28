@@ -7,7 +7,7 @@ import (
 	"strconv"
 )
 
-// agentStore is the on-disk persistence of the `?` agent: replies keyed by dir+\x00+instr and
+// agentStore is the on-disk persistence of the `a` agent: replies keyed by dir+\x00+instr and
 // the last instruction per dir. prowl is launched fresh on every Ctrl+Shift+O, so without this
 // the right-pane teaser and the panel would be empty until you re-ask. Loaded on start, saved
 // whenever a reply lands or a question is asked.

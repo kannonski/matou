@@ -17,7 +17,7 @@ import (
 )
 
 func loadModel() (model, error) {
-	replies, lastInstr := loadAgentCache() // persisted `?` agent replies survive restarts
+	replies, lastInstr := loadAgentCache() // persisted `a` agent replies survive restarts
 	m := model{
 		cache:       map[string]string{},
 		replyCache:  replies,

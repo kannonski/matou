@@ -12,12 +12,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
-	case agentMsg: // the `?` agent's reply came back
+	case agentMsg: // the `a` agent's reply came back
 		m.replyCache[msg.dir+"\x00"+msg.instr] = msg.text
 		delete(m.workingDirs, msg.dir)            // right pane: working → reply
 		saveAgentCache(m.replyCache, m.lastInstr) // persist across restarts
 		if m.mode == "agent" && m.agentDir == msg.dir {
 			m.agentResult, m.agentWorking, m.agentOff = msg.text, false, 0
+			m.agentFocus = "read" // answer's here → drop into read/scroll
 		}
 	case tea.KeyMsg:
 		switch m.mode {
@@ -85,7 +86,7 @@ func (m model) updateNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.mode, m.query = "filter", ""
 		return m.applyFilter().moved()
-	case "?": // ask the agent about the selected dir (floating panel)
+	case "a": // ask the agent about the selected dir (floating panel)
 		if agentHook == "" {
 			m.status = "set $PROWL_AGENT_CMD to use the agent"
 			return m, nil
@@ -93,12 +94,13 @@ func (m model) updateNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if it, ok := m.sel(); ok && it.dir != "" {
 			m.mode, m.agentDir, m.agentName = "agent", it.dir, nameOf(it)
 			m.agentInput, m.agentResult, m.agentWorking, m.agentOff = "", "", false, 0
+			m.agentFocus = "input"
 			if li := m.lastInstr[it.dir]; li != "" { // restore the last Q&A so the full answer is readable
 				m.agentInput = li
 				if m.workingDirs[it.dir] {
 					m.agentWorking = true
-				} else {
-					m.agentResult = m.replyCache[it.dir+"\x00"+li]
+				} else if m.agentResult = m.replyCache[it.dir+"\x00"+li]; m.agentResult != "" {
+					m.agentFocus = "read" // opened on a dir with an answer → start reading it
 				}
 			}
 		}
@@ -217,15 +219,65 @@ func (m model) updateMove(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateAgent drives the floating `?` panel: type an instruction, enter runs it (cached per
-// dir+instruction), up/down scroll the reply, esc closes.
+// updateAgent drives the floating `a` panel. It has two focuses so reading a long answer
+// doesn't fight with typing a new one: INPUT (type the question) and READ (scroll the answer
+// with vim keys). Tab toggles; esc/ctrl-c work in both. A reply landing drops you into READ.
 func (m model) updateAgent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
+	_, bodyH := agentDims(m.w, m.h)
+	switch msg.Type { // global, both focuses
 	case tea.KeyCtrlC:
 		return m, tea.Quit
 	case tea.KeyEsc:
-		m.mode = ""
+		m.mode, m.agentFocus = "", "input"
 		return m, nil
+	case tea.KeyTab:
+		if m.agentResult != "" { // nothing to read yet → stay put
+			if m.agentFocus == "read" {
+				m.agentFocus = "input"
+			} else {
+				m.agentFocus = "read"
+			}
+		}
+		return m, nil
+	}
+	if m.agentFocus == "read" {
+		return m.updateAgentRead(msg, bodyH)
+	}
+	return m.updateAgentInput(msg)
+}
+
+// updateAgentRead scrolls the answer (vim-style). i/a/enter jump back to typing.
+func (m model) updateAgentRead(msg tea.KeyMsg, bodyH int) (tea.Model, tea.Cmd) {
+	half := max(1, bodyH/2)
+	switch msg.String() {
+	case "j", "down", "ctrl+n":
+		m.agentOff++ // clamped at render
+	case "k", "up", "ctrl+p":
+		if m.agentOff > 0 {
+			m.agentOff--
+		}
+	case "ctrl+d":
+		m.agentOff += half
+	case "ctrl+u":
+		m.agentOff = max(0, m.agentOff-half)
+	case "ctrl+f", "pgdown", " ":
+		m.agentOff += bodyH
+	case "ctrl+b", "pgup":
+		m.agentOff = max(0, m.agentOff-bodyH)
+	case "g", "home":
+		m.agentOff = 0
+	case "G", "end":
+		m.agentOff = 1 << 30 // clamped at render
+	case "i", "a", "/", "enter":
+		m.agentFocus = "input" // back to typing
+	}
+	return m, nil
+}
+
+// updateAgentInput edits the instruction; enter runs it (cached per dir+instruction), and
+// up/down peek-scroll the reply without leaving the input.
+func (m model) updateAgentInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
 	case tea.KeyEnter:
 		instr := strings.TrimSpace(m.agentInput)
 		if instr == "" {
@@ -235,6 +287,7 @@ func (m model) updateAgent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		saveAgentCache(m.replyCache, m.lastInstr) // persist the question (reply persists when it lands)
 		if c, ok := m.replyCache[m.agentDir+"\x00"+instr]; ok {
 			m.agentResult, m.agentWorking, m.agentOff = c, false, 0
+			m.agentFocus = "read" // cached answer is right here → read it
 			return m, nil
 		}
 		m.agentResult, m.agentWorking, m.agentOff = "", true, 0
