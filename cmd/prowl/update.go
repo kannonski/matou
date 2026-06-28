@@ -44,8 +44,8 @@ func (m model) moved() (model, tea.Cmd) {
 	return m.refreshPreview(), nil
 }
 
-// actOn performs a row's primary action: jump (open) · move (newtab/newwin) · pick-a-layout
-// (relay/project). Used by both a label tap and enter.
+// actOn performs a row's primary action: jump to an open tab, or open the layout picker for
+// a project dir. Bound to l/enter.
 func (m model) actOn(idx int) (model, tea.Cmd) {
 	m.cur = clamp(idx, len(m.view))
 	it, ok := m.sel()
@@ -71,9 +71,9 @@ func (m model) enterLayoutMode(dir string) model {
 	return m
 }
 
-// updateNav (default mode): vim hjkl navigation. j/k move · l/enter open/drill · h back
-// out · g/G top/bottom · "/" search · ctrl-s/x/r/d row actions. No typing-to-filter here —
-// letters are navigation; search lives behind "/".
+// updateNav (default mode): vim hjkl navigation. j/k move · l/enter open · h quit · g/G
+// top/bottom · "/" search · bare-key actions a(sk)/m(ove)/.(relayout)/x(close)/r(ename). No
+// typing-to-filter here — letters are navigation; search lives behind "/".
 func (m model) updateNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc", "ctrl+c", "h":
@@ -195,9 +195,9 @@ func (m model) updateLayout(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateMove drives the two-stage move. Stage A (moveSrc==0): pick the pane to move from
-// the tab list. Stage B: pick a destination — enter into the highlighted tab, M = a new
-// tab, W = a new OS window. esc steps back (B→A) or cancels (A→nav).
+// updateMove drives the two-stage move. Stage A (moveSrc==0): pick the pane to move from the
+// tab list. Stage B: pick a destination tab and enter to drop the pane into it. esc steps
+// back (B→A) or cancels (A→nav).
 func (m model) updateMove(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":

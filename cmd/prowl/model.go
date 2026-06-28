@@ -12,7 +12,7 @@ type item struct {
 	dir     string // cwd (relay/open) or project dir
 	winID   int    // open: window to focus
 	tabID   int    // open: tab to kill / rename
-	title   string // open: tab title; newtab/newwin: the label
+	title   string // open: tab title
 	status  string // open: focused | running | idle | failed
 	proc    string // open: foreground command
 	branch  string // open: git branch
@@ -33,7 +33,7 @@ type model struct {
 	query string
 	cur   int // index into view
 
-	mode       string // "" palette | "layout" | "rename"
+	mode       string // "" nav | filter | layout | rename | move | agent
 	layouts    []string
 	layoutDefs map[string]layout // layout name → full def (caption + spec), for the picker
 	layCur     int
@@ -69,7 +69,7 @@ type model struct {
 }
 
 // reload rebuilds the rows from `kitty @ ls` + the project sources, preserving the query,
-// cursor and source. Called on start and after kill/prune/rename.
+// cursor and source. Called on start and after close/rename.
 func (m model) reload() model {
 	tabs, openCwds, err := openTabs()
 	if err != nil {
@@ -158,13 +158,7 @@ func (m model) refreshPreview() model {
 	}
 	it, ok := m.sel()
 	switch {
-	case !ok:
-		m.preview = ""
-	case it.kind == "newtab":
-		m.preview = "Enter — move the pane you came from into a new tab."
-	case it.kind == "newwin":
-		m.preview = "Enter — move the pane you came from into a new OS window."
-	case it.dir != "":
+	case ok && it.dir != "":
 		m.preview = m.cached("dir:"+it.dir, func() string { return dirPreview(it.dir) })
 	default:
 		m.preview = ""
