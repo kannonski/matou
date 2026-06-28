@@ -250,77 +250,6 @@ func (m model) agentPanel() string {
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
 }
 
-// visibleWidth is the printed cell width of s, ignoring ANSI SGR escapes (palette.py emits
-// truecolor sketches, so len() over-counts wildly).
-func visibleWidth(s string) int {
-	n, inEsc := 0, false
-	for _, r := range s {
-		switch {
-		case inEsc:
-			if r == 'm' {
-				inEsc = false
-			}
-		case r == '\x1b':
-			inEsc = true
-		default:
-			n++
-		}
-	}
-	return n
-}
-
-// centerLine left-pads s (ignoring its ANSI) to sit centred in width w; the box's own Width
-// fills the right side.
-func centerLine(s string, w int) string {
-	if pad := (w - visibleWidth(s)) / 2; pad > 0 {
-		return strings.Repeat(" ", pad) + s
-	}
-	return s
-}
-
-// layoutPanel renders the floating layout picker — a centered box showing the current layout's
-// full colored sketch (palette.py), its name+caption, and an n/m carousel. h/l (or j/k) cycle,
-// enter builds, esc cancels. One layout at a time so the sketch gets the whole stage.
-func (m model) layoutPanel() string {
-	w, h := m.w, m.h
-	if w <= 0 {
-		w = 100
-	}
-	if h <= 0 {
-		h = 30
-	}
-	dir := filepath.Base(m.layDir)
-
-	if len(m.layouts) == 0 {
-		box := lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.RoundedBorder()).
-			BorderForeground(borderC).Render(dim.Render("no layouts — check palette.py"))
-		return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
-	}
-
-	lines := strings.Split(strings.TrimRight(m.preview, "\n"), "\n") // m.preview = cached sketch
-
-	cw := visibleWidth("layout for " + dir)
-	for _, l := range lines {
-		if vw := visibleWidth(l); vw > cw {
-			cw = vw
-		}
-	}
-	cw = min(cw, max(24, w-6))
-	if avail := h - 5; avail > 0 && len(lines) > avail { // keep the whole panel within the terminal
-		lines = lines[:avail]
-	}
-
-	counter := fmt.Sprintf("%d/%d", m.layCur+1, len(m.layouts))
-	header := centerLine(promptSt.Render("layout for "+dir), cw)
-	cycle := centerLine(dim.Render("◂ h")+"   "+selSt.Render(counter)+"   "+dim.Render("l ▸"), cw)
-	keys := centerLine(dim.Render("enter build · esc cancel"), cw)
-
-	content := header + "\n" + strings.Join(lines, "\n") + "\n" + cycle + "\n" + keys
-	box := lipgloss.NewStyle().Width(cw).Padding(0, 1).
-		Border(lipgloss.RoundedBorder()).BorderForeground(borderC).Render(content)
-	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
-}
-
 // windowRange returns the [start,end) slice of n items to show in h rows, centring cur.
 func windowRange(cur, n, h int) (int, int) {
 	if h >= n {
@@ -328,6 +257,21 @@ func windowRange(cur, n, h int) (int, int) {
 	}
 	start := max(0, min(cur-h/2, n-h))
 	return start, start + h
+}
+
+// layoutRow is a self-describing picker row: the layout name (a fixed column) + its dim
+// caption, e.g. "dev    editor · shell · lazygit". Selected = the highlight bar.
+func (m model) layoutRow(i, leftW int, selected bool) string {
+	const nameW = 7 // widest layout name is ~6 chars; pad to align the captions
+	name := m.layouts[i]
+	nm := trunc(name, nameW)
+	nm += strings.Repeat(" ", max(0, nameW-len([]rune(nm))))
+	desc := trunc(m.layoutDescs[name], max(1, leftW-4-nameW)) // after "  " + name + " "
+
+	if selected { // single-style highlight bar (= the cursor)
+		return barStyle.Width(leftW).Render("  " + nm + " " + desc)
+	}
+	return "  " + promptSt.Render(nm) + " " + dim.Render(desc)
 }
 
 func (m model) leftRow(viewIdx, leftW int, selected bool) string {
@@ -428,9 +372,6 @@ func (m model) View() string {
 	if m.mode == "agent" {
 		return m.agentPanel()
 	}
-	if m.mode == "layout" {
-		return m.layoutPanel()
-	}
 	w, h := m.w, m.h
 	if w <= 0 {
 		w = 100
@@ -440,6 +381,9 @@ func (m model) View() string {
 	}
 	innerW := max(20, w-4) // inside the rounded frame: border(2) + padding(2)
 	leftW := max(24, min((innerW-1)*2/5, 52))
+	if m.mode == "layout" { // a slim list → the (wide) sketch gets the rest
+		leftW = max(20, min(leftW, 34))
+	}
 	if leftW > innerW-14 { // always leave the preview some room
 		leftW = max(10, innerW-14)
 	}
@@ -449,6 +393,9 @@ func (m model) View() string {
 	// header (prompt) + footer (hints) per mode (layout/agent own the whole screen above)
 	var prompt, footer string
 	switch m.mode {
+	case "layout":
+		prompt = promptSt.Render("layout for "+filepath.Base(m.layDir)) + dim.Render("   ↵ build · esc back")
+		footer = dim.Render("j/k pick · l/↵ build · h back")
 	case "rename":
 		prompt = promptSt.Render("rename tab ❯ ") + m.rinput + selSt.Render("▌")
 		footer = dim.Render("enter save · esc cancel")
@@ -474,9 +421,16 @@ func (m model) View() string {
 
 	// list column
 	var rows []string
-	start, end := windowRange(m.cur, len(m.view), bodyH)
-	for i := start; i < end; i++ {
-		rows = append(rows, m.leftRow(i, leftW, i == m.cur))
+	if m.mode == "layout" {
+		start, end := windowRange(m.layCur, len(m.layouts), bodyH)
+		for i := start; i < end; i++ {
+			rows = append(rows, m.layoutRow(i, leftW, i == m.layCur))
+		}
+	} else {
+		start, end := windowRange(m.cur, len(m.view), bodyH)
+		for i := start; i < end; i++ {
+			rows = append(rows, m.leftRow(i, leftW, i == m.cur))
+		}
 	}
 
 	leftBox := lipgloss.NewStyle().Width(leftW).Height(bodyH).

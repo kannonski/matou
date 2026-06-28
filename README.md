@@ -22,12 +22,12 @@ Actions live on keys, not rows: `.` relayout the current dir · `m` move a pane 
 pane, then drop it into a destination tab).
 
 The right pane previews the selection in clear sections — **REPO** (git branch + change
-count) and **FILES** (listing) for a directory, and an **AGENT** teaser on top once you've
-asked the `a` agent something (see below).
+count) and **FILES** (listing) for a directory, the layout's **sketch** when you're picking
+one, and an **AGENT** teaser on top once you've asked the `a` agent something (see below).
 
-Picking a layout (`l`/enter on a project, or `.` to relayout) opens a **floating carousel**:
-the chosen layout's colored sketch front and centre with its name + caption and an `n/m`
-counter — `h`/`l` (or `j`/`k`) cycle, `enter` builds, `esc` cancels.
+Picking a layout (`l`/enter on a project, or `.` to relayout) shows a self-describing list —
+each layout's name + caption — with its colored sketch previewed on the right. `j`/`k` pick,
+`l`/`enter` builds, `h`/`esc` back.
 
 ## Keys
 
@@ -42,7 +42,7 @@ Vim navigation; search lives behind `/`.
 | `a` | ask the agent about the selected dir (floating panel) |
 | `x` | close the highlighted tab |
 | `r` | rename the highlighted tab |
-| `h` | back out / quit (in the layout carousel, `h`/`l` cycle) |
+| `h` | back out (in the layout picker → back to the list) |
 | `/` | search **all** projects — type to filter, `esc` back to nav |
 | `q` / `esc` | quit |
 

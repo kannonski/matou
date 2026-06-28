@@ -32,6 +32,22 @@ func paletteNames() []string {
 	return names
 }
 
+// paletteDescs returns layout name → caption (e.g. "dev" → "editor · shell · lazygit"), for
+// the picker's self-describing list. Empty map if the palette is too old to support `descs`.
+func paletteDescs() map[string]string {
+	out, err := exec.Command("python3", palettePath(), "descs").Output()
+	if err != nil {
+		return map[string]string{}
+	}
+	descs := map[string]string{}
+	for _, l := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if name, cap, ok := strings.Cut(l, "\t"); ok {
+			descs[name] = cap
+		}
+	}
+	return descs
+}
+
 func paletteSketch(name string) string {
 	out, _ := exec.Command("python3", palettePath(), "sketch", name).Output()
 	return string(out)

@@ -33,10 +33,11 @@ type model struct {
 	query string
 	cur   int // index into view
 
-	mode    string // "" palette | "layout" | "rename"
-	layouts []string
-	layCur  int
-	layDir  string // dir chosen to lay out
+	mode        string // "" palette | "layout" | "rename"
+	layouts     []string
+	layoutDescs map[string]string // layout name → caption, for the picker list
+	layCur      int
+	layDir      string // dir chosen to lay out
 
 	rtab   int    // tab being renamed
 	rinput string // rename input buffer

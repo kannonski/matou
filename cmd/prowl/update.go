@@ -58,7 +58,7 @@ func (m model) actOn(idx int) (model, tea.Cmd) {
 	}
 	// project → pick a layout for that dir
 	m.mode, m.layDir, m.layCur = "layout", it.dir, 0
-	m.layouts = paletteNames()
+	m.layouts, m.layoutDescs = paletteNames(), paletteDescs()
 	return m.moved()
 }
 
@@ -111,7 +111,7 @@ func (m model) updateNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ".": // relayout the current dir → pick a layout
 		if m.cwd != "" {
 			m.mode, m.layDir, m.layCur = "layout", m.cwd, 0
-			m.layouts = paletteNames()
+			m.layouts, m.layoutDescs = paletteNames(), paletteDescs()
 			return m.moved()
 		}
 	case "x": // close the highlighted tab
@@ -162,30 +162,25 @@ func (m model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateLayout drives the floating layout carousel: h/l (or j/k, arrows, tab) cycle through
-// the layouts (wrapping), enter builds the highlighted one, esc cancels back to the palette.
+// updateLayout drives the two-pane layout picker: j/k pick (the right pane previews the
+// sketch), l/enter build, h/esc back to the palette.
 func (m model) updateLayout(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	n := len(m.layouts)
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
-	case "esc": // back to the palette
+	case "esc", "h": // back to the palette
 		m.mode = ""
 		return m.moved()
-	case "enter":
-		if m.layCur >= 0 && m.layCur < n {
+	case "enter", "l":
+		if m.layCur >= 0 && m.layCur < len(m.layouts) {
 			_ = paletteBuild(m.layouts[m.layCur], m.layDir)
 			return m, tea.Quit
 		}
-	case "l", "j", "right", "down", "ctrl+n", "tab":
-		if n > 0 {
-			m.layCur = (m.layCur + 1) % n
-		}
+	case "j", "down", "ctrl+n":
+		m.layCur = clamp(m.layCur+1, len(m.layouts))
 		return m.moved()
-	case "h", "k", "left", "up", "ctrl+p", "shift+tab":
-		if n > 0 {
-			m.layCur = (m.layCur - 1 + n) % n
-		}
+	case "k", "up", "ctrl+p":
+		m.layCur = clamp(m.layCur-1, len(m.layouts))
 		return m.moved()
 	}
 	return m, nil
