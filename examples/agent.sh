@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sample PROWL_AGENT_CMD — answer an instruction about the selected project, in prowl's
-# floating `:` panel. Enable with:  export PROWL_AGENT_CMD="$HOME/.config/kitty/prowl-agent.sh"
+# floating `?` panel. Enable with:  export PROWL_AGENT_CMD="$HOME/.config/kitty/prowl-agent.sh"
 # prowl calls it as `<this> <dir> "<instruction>"`; print the answer to stdout.
 set -uo pipefail
 dir=${1:?usage: agent.sh <dir> <instruction>}

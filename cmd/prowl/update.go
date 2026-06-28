@@ -12,9 +12,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
-	case agentMsg: // the `:` agent's reply came back
+	case agentMsg: // the `?` agent's reply came back
 		m.replyCache[msg.dir+"\x00"+msg.instr] = msg.text
-		delete(m.workingDirs, msg.dir) // right pane: working → reply
+		delete(m.workingDirs, msg.dir)            // right pane: working → reply
+		saveAgentCache(m.replyCache, m.lastInstr) // persist across restarts
 		if m.mode == "agent" && m.agentDir == msg.dir {
 			m.agentResult, m.agentWorking, m.agentOff = msg.text, false, 0
 		}
@@ -84,7 +85,7 @@ func (m model) updateNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.mode, m.query = "filter", ""
 		return m.applyFilter().moved()
-	case ":": // instruct the agent about the selected dir (floating panel)
+	case "?": // ask the agent about the selected dir (floating panel)
 		if agentHook == "" {
 			m.status = "set $PROWL_AGENT_CMD to use the agent"
 			return m, nil
@@ -92,6 +93,14 @@ func (m model) updateNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if it, ok := m.sel(); ok && it.dir != "" {
 			m.mode, m.agentDir, m.agentName = "agent", it.dir, nameOf(it)
 			m.agentInput, m.agentResult, m.agentWorking, m.agentOff = "", "", false, 0
+			if li := m.lastInstr[it.dir]; li != "" { // restore the last Q&A so the full answer is readable
+				m.agentInput = li
+				if m.workingDirs[it.dir] {
+					m.agentWorking = true
+				} else {
+					m.agentResult = m.replyCache[it.dir+"\x00"+li]
+				}
+			}
 		}
 		return m, nil
 	case "m": // move a pane → enter move mode (pick the pane, then a destination)
@@ -208,7 +217,7 @@ func (m model) updateMove(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateAgent drives the floating `:` panel: type an instruction, enter runs it (cached per
+// updateAgent drives the floating `?` panel: type an instruction, enter runs it (cached per
 // dir+instruction), up/down scroll the reply, esc closes.
 func (m model) updateAgent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
@@ -222,7 +231,8 @@ func (m model) updateAgent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if instr == "" {
 			return m, nil
 		}
-		m.lastInstr[m.agentDir] = instr // surface this Q&A in the right pane for the dir
+		m.lastInstr[m.agentDir] = instr           // surface this Q&A in the right pane for the dir
+		saveAgentCache(m.replyCache, m.lastInstr) // persist the question (reply persists when it lands)
 		if c, ok := m.replyCache[m.agentDir+"\x00"+instr]; ok {
 			m.agentResult, m.agentWorking, m.agentOff = c, false, 0
 			return m, nil

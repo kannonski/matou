@@ -17,11 +17,12 @@ import (
 )
 
 func loadModel() (model, error) {
+	replies, lastInstr := loadAgentCache() // persisted `?` agent replies survive restarts
 	m := model{
 		cache:       map[string]string{},
-		replyCache:  map[string]string{},
+		replyCache:  replies,
 		workingDirs: map[string]bool{},
-		lastInstr:   map[string]string{},
+		lastInstr:   lastInstr,
 	}
 	m = m.reload()
 	if m.err != "" {

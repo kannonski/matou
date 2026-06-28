@@ -23,7 +23,7 @@ pane, then drop it into a destination tab).
 
 The right pane previews the selection in clear sections — **REPO** (git branch + change
 count) and **FILES** (listing) for a directory, the layout sketch when you're choosing one,
-and an **AGENT** teaser on top once you've asked the `:` agent something (see below).
+and an **AGENT** teaser on top once you've asked the `?` agent something (see below).
 
 ## Keys
 
@@ -35,7 +35,7 @@ Vim navigation; search lives behind `/`.
 | `l` / `enter` | open: jump to a tab · pick-a-layout for a dir |
 | `m` | move a pane — pick the pane, then `↵` to drop it into a destination tab (`esc` steps back) |
 | `.` | relayout the current dir (layout picker for where you launched) |
-| `:` | instruct the agent about the selected dir (floating panel) |
+| `?` | ask the agent about the selected dir (floating panel) |
 | `x` | close the highlighted tab |
 | `r` | rename the highlighted tab |
 | `h` | back out (in the layout picker → back to the list) |
@@ -53,17 +53,19 @@ to search the full set.
   reinventing layouts.
 - Optional: `zoxide` (project frecency), `git` + `ls` (previews).
 
-## Agent — `:` (optional)
+## Agent — `?` (optional)
 
-Press **`:`** to instruct an agent about the selected directory. A floating panel opens
+Press **`?`** to ask an agent about the selected directory. A floating panel opens
 (over the palette); type an instruction, `enter` runs `$PROWL_AGENT_CMD <dir> "<instruction>"`
 **async** (`🤖 working…` until it returns), the reply fills the panel (`↑↓` scroll), `esc`
-closes. Replies are **cached** per dir+instruction. Unset = `:` is disabled.
+closes. Replies are **cached** per dir+instruction and **persist across restarts** (in
+`$XDG_CACHE_HOME/prowl/agent.json`). Unset = `?` is disabled.
 
 Since it's async you needn't wait: close the panel and keep browsing — the right pane's
 **AGENT** section shows `🤖 working…` for that dir, then a **10-line teaser** of the answer
 (with the question) once it lands, and keeps it there when you revisit. To read the full
-answer, press `:` again — the floating panel is where the whole reply lives (`↑↓` to scroll).
+answer, press `?` again — the floating panel restores the last Q&A and is where the whole
+reply lives (`↑↓` to scroll).
 
 ```sh
 export PROWL_AGENT_CMD="$HOME/.config/kitty/prowl-agent.sh"   # called: <cmd> <dir> "<instruction>"

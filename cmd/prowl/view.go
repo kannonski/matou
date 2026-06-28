@@ -118,7 +118,7 @@ func (m model) navActions() string {
 	}
 	a = append(a, "m move")
 	if agentHook != "" {
-		a = append(a, ": agent")
+		a = append(a, "? ask")
 	}
 	if m.cwd != "" {
 		a = append(a, ". relayout")
@@ -127,7 +127,7 @@ func (m model) navActions() string {
 	return strings.Join(a, " · ")
 }
 
-// agentPanel renders the floating `:` agent panel — a centered box (solid backdrop) with the
+// agentPanel renders the floating `?` agent panel — a centered box (solid backdrop) with the
 // instruction line, the reply (scrollable), over the palette.
 func (m model) agentPanel() string {
 	w, h := m.w, m.h
@@ -143,7 +143,7 @@ func (m model) agentPanel() string {
 	bodyH := max(1, ph-6)
 
 	header := promptSt.Render("🤖 " + trunc(m.agentName, innerW-3))
-	input := promptSt.Render(": ") + trunc(m.agentInput, innerW-3) + selSt.Render("▌")
+	input := promptSt.Render("? ") + trunc(m.agentInput, innerW-3) + selSt.Render("▌")
 	rule := ruleSt.Render(strings.Repeat("─", innerW))
 
 	body := make([]string, bodyH)
@@ -210,8 +210,8 @@ func (m model) leftRow(viewIdx, leftW int, selected bool) string {
 	return out
 }
 
-// rightContent composes the right pane as clear sections: the ambient `:` agent teaser
-// (the question + at most 10 reply lines — the full answer is read in the `:` panel), then
+// rightContent composes the right pane as clear sections: the ambient `?` agent teaser
+// (the question + at most 10 reply lines — the full answer is read in the `?` panel), then
 // the dir's REPO + FILES (built in dirPreview). Returns exactly bodyH lines (lipgloss.Height
 // only pads, never truncates — so we cap here or a long listing overruns the frame).
 func (m model) rightContent(rightW, bodyH int) string {
@@ -238,7 +238,7 @@ func (m model) rightContent(rightW, bodyH int) string {
 }
 
 // agentSection is the right-pane agent teaser: the question + at most 10 reply lines. The
-// full, scrollable answer lives in the `:` panel (press `:` to read it).
+// full, scrollable answer lives in the `?` panel (press `?` to read it).
 func agentSection(question, reply string, w int) string {
 	const maxReply = 10
 	lines := strings.Split(strings.TrimRight(reply, "\n"), "\n")
@@ -248,7 +248,7 @@ func agentSection(question, reply string, w int) string {
 	}
 	body := strings.Join(lines, "\n")
 	if clipped {
-		body += "\n" + dim.Render("… press : for the full answer")
+		body += "\n" + dim.Render("… press ? for the full answer")
 	}
 	return sectionHead("AGENT") + "\n" + promptSt.Render(trunc("🤖 "+question, w)) + "\n" + body
 }
