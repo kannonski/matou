@@ -17,7 +17,12 @@ import (
 )
 
 func loadModel() (model, error) {
-	m := model{cache: map[string]string{}, replyCache: map[string]string{}}
+	m := model{
+		cache:       map[string]string{},
+		replyCache:  map[string]string{},
+		workingDirs: map[string]bool{},
+		lastInstr:   map[string]string{},
+	}
 	m = m.reload()
 	if m.err != "" {
 		return m, errors.New(m.err)

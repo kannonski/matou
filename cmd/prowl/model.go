@@ -55,9 +55,11 @@ type model struct {
 	agentDir     string            // dir the agent acts on (captured when : is pressed)
 	agentName    string            // panel title
 	agentResult  string            // the reply ("" = none yet)
-	agentWorking bool              // true while the hook runs
+	agentWorking bool              // true while the hook runs (for the panel)
 	agentOff     int               // scroll offset in the reply
 	replyCache   map[string]string // dir+\x00+instr → reply
+	workingDirs  map[string]bool   // dirs with a `:` query in flight (for the right pane)
+	lastInstr    map[string]string // dir → last instruction asked (its reply shows in the pane)
 
 	w, h   int
 	status string

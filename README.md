@@ -59,6 +59,10 @@ Press **`:`** to instruct an agent about the selected directory. A floating pane
 **async** (`🤖 working…` until it returns), the reply fills the panel (`↑↓` scroll), `esc`
 closes. Replies are **cached** per dir+instruction. Unset = `:` is disabled.
 
+Since it's async you needn't wait: close the panel and keep browsing — the **right pane**
+shows `🤖 working…` for that dir, then the reply (with the question) once it lands, and keeps
+it there when you revisit.
+
 ```sh
 export PROWL_AGENT_CMD="$HOME/.config/kitty/prowl-agent.sh"   # called: <cmd> <dir> "<instruction>"
 ```

@@ -211,7 +211,22 @@ func (m model) leftRow(viewIdx, leftW int, selected bool) string {
 // rightContent returns exactly bodyH preview lines (lipgloss.Height only pads, never
 // truncates — so we must cap here or a long listing overruns the frame).
 func (m model) rightContent(rightW, bodyH int) string {
-	src := strings.Split(m.preview, "\n")
+	content := m.preview
+	if m.mode != "layout" { // ambient `:` agent state for the selected dir, above the git+listing
+		if it, ok := m.sel(); ok && it.dir != "" {
+			switch {
+			case m.workingDirs[it.dir]:
+				content = runG.Render("🤖 working…") + "\n\n" + content
+			default:
+				if li := m.lastInstr[it.dir]; li != "" {
+					if r := m.replyCache[it.dir+"\x00"+li]; r != "" {
+						content = promptSt.Render("🤖 "+li) + "\n" + r + "\n\n" + content
+					}
+				}
+			}
+		}
+	}
+	src := strings.Split(content, "\n")
 	out := make([]string, bodyH)
 	for i := range bodyH {
 		if i < len(src) {

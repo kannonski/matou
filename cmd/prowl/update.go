@@ -14,6 +14,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.w, m.h = msg.Width, msg.Height
 	case agentMsg: // the `:` agent's reply came back
 		m.replyCache[msg.dir+"\x00"+msg.instr] = msg.text
+		delete(m.workingDirs, msg.dir) // right pane: working → reply
 		if m.mode == "agent" && m.agentDir == msg.dir {
 			m.agentResult, m.agentWorking, m.agentOff = msg.text, false, 0
 		}
@@ -221,11 +222,13 @@ func (m model) updateAgent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if instr == "" {
 			return m, nil
 		}
+		m.lastInstr[m.agentDir] = instr // surface this Q&A in the right pane for the dir
 		if c, ok := m.replyCache[m.agentDir+"\x00"+instr]; ok {
 			m.agentResult, m.agentWorking, m.agentOff = c, false, 0
 			return m, nil
 		}
 		m.agentResult, m.agentWorking, m.agentOff = "", true, 0
+		m.workingDirs[m.agentDir] = true
 		return m, agentCmd(m.agentDir, instr)
 	case tea.KeyUp, tea.KeyCtrlP:
 		if m.agentOff > 0 {
