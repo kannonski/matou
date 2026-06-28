@@ -1,11 +1,11 @@
-# prowl
+# matou
 
 A **palette for [kitty](https://sw.kovidgoyal.net/kitty/)** — vim-navigated, one keystroke to
 jump to an open project tab, or open a directory in a chosen layout. A remote-control client
 (it shells out to `kitty @`), not a kitten, so it's a normal Go TUI.
 
 ```
-prowl   j/k nav · l open · / search
+matou   j/k nav · l open · / search
   ⏵ infra-base   nvim main *4 │ infra-base    main    4 changes
   ○ scripts              zsh  │ Justfile  README.md  modules/  …
   + ibm-helper                │
@@ -53,20 +53,20 @@ to search the full set.
 
 - **kitty** with `allow_remote_control` + `listen_on` (so `kitty @` works).
 - A **layouts file** at `~/.config/kitty/palette.layouts` (TOML) defining your layouts.
-  prowl's built-in Go engine parses it, draws the preview sketch, and launches the panes — no
-  external script. Override the path with `$PROWL_LAYOUTS`. See
+  matou's built-in Go engine parses it, draws the preview sketch, and launches the panes — no
+  external script. Override the path with `$MATOU_LAYOUTS`. See
   [`examples/palette.layouts`](examples/palette.layouts) for the format.
 - Optional: `zoxide` (project frecency, and `zoxide add` on build), `git` + `ls` (previews).
 
 ## Agent — `a` (optional)
 
 Press **`a`** to ask an agent about the selected directory. The floating panel has two
-focuses: **type** the question (`enter` runs `$PROWL_AGENT_CMD <dir> "<instruction>"` **async**,
+focuses: **type** the question (`enter` runs `$MATOU_AGENT_CMD <dir> "<instruction>"` **async**,
 `🤖 working…` until it returns) and **read** the answer (vim scroll: `j`/`k`, `^d`/`^u`
 half-page, `g`/`G` ends — the footer shows a `12–24/80` position). `Tab` toggles focus; a reply
 landing drops you straight into read, `i` jumps back to ask a follow-up, `esc` closes. Replies
 are **cached** per dir+instruction and **persist across restarts** (in
-`$XDG_CACHE_HOME/prowl/agent.json`). Unset = `a` is disabled.
+`$XDG_CACHE_HOME/matou/agent.json`). Unset = `a` is disabled.
 
 Since it's async you needn't wait: close the panel and keep browsing — the right pane's
 **AGENT** section shows `🤖 working…` for that dir, then a **10-line teaser** of the answer
@@ -75,7 +75,7 @@ answer, press `a` again — the floating panel restores the last Q&A and is wher
 reply lives (`↑↓` to scroll).
 
 ```sh
-export PROWL_AGENT_CMD="$HOME/.config/kitty/prowl-agent.sh"   # called: <cmd> <dir> "<instruction>"
+export MATOU_AGENT_CMD="$HOME/.config/kitty/matou-agent.sh"   # called: <cmd> <dir> "<instruction>"
 ```
 
 See [`examples/agent.sh`](examples/agent.sh) for a sample that answers with an LLM (`claude`),
@@ -84,18 +84,18 @@ grounded in the repo's git state + README, with read-only tools.
 ## Install
 
 ```sh
-go install github.com/kannonski/prowl/cmd/prowl@latest
+go install github.com/kannonski/matou/cmd/matou@latest
 ```
 
-Bind it to a self-toggling overlay (no kitten — pure Go). The `--var prowl=1` tag lets
-prowl detect a sibling on startup and dismiss it on a second press:
+Bind it to a self-toggling overlay (no kitten — pure Go). The `--var matou=1` tag lets
+matou detect a sibling on startup and dismiss it on a second press:
 
 ```conf
 # kitty.conf  (needs allow_remote_control + listen_on)
-map ctrl+shift+o launch --type=overlay --cwd=current --title=prowl --var prowl=1 ~/.local/bin/prowl
+map ctrl+shift+o launch --type=overlay --cwd=current --title=matou --var matou=1 ~/.local/bin/matou
 ```
 
-`--cwd=current` gives the relayout key (`.`) its directory. Run `prowl` directly to try it
+`--cwd=current` gives the relayout key (`.`) its directory. Run `matou` directly to try it
 without binding.
 
 ## License

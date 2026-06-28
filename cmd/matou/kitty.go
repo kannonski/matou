@@ -10,7 +10,7 @@ import (
 )
 
 // ── kitty remote-control client ──
-// prowl is a remote-control client, not a kitten: it shells out to `kitty @ <cmd>`, which
+// matou is a remote-control client, not a kitten: it shells out to `kitty @ <cmd>`, which
 // resolves the control socket from $KITTY_LISTEN_ON. So it needs to run inside kitty with
 // `allow_remote_control` + `listen_on` enabled (kittens are Python-only; Go can't be one).
 
@@ -74,9 +74,9 @@ func closeWindow(winID int) error {
 	return exec.Command("kitty", "@", "close-window", "--match", "id:"+strconv.Itoa(winID)).Run()
 }
 
-// findOtherProwl returns the id of another prowl overlay (tagged user_var prowl=1) in the
-// focused tab, excluding self — the startup self-toggle uses it to dismiss an open prowl.
-func findOtherProwl(tree []osWindow, self int) int {
+// findOtherMatou returns the id of another matou overlay (tagged user_var matou=1) in the
+// focused tab, excluding self — the startup self-toggle uses it to dismiss an open matou.
+func findOtherMatou(tree []osWindow, self int) int {
 	for _, ow := range tree {
 		if !ow.IsFocused {
 			continue
@@ -86,7 +86,7 @@ func findOtherProwl(tree []osWindow, self int) int {
 				continue
 			}
 			for _, w := range t.Windows {
-				if w.ID != self && w.UserVars["prowl"] == "1" {
+				if w.ID != self && w.UserVars["matou"] == "1" {
 					return w.ID
 				}
 			}
@@ -135,7 +135,7 @@ func procName(w kwin) string {
 }
 
 // openTabs flattens `kitty @ ls` to one jump target per tab (the active window), skipping
-// prowl's own window, and returns the set of cwds already open (to dedup the project list).
+// matou's own window, and returns the set of cwds already open (to dedup the project list).
 func openTabs() ([]openTab, map[string]bool, error) {
 	tree, err := kittyLS()
 	if err != nil {

@@ -1,17 +1,17 @@
-# prowl — task runner (https://github.com/casey/just). Run `just` for the default build.
+# matou — task runner (https://github.com/casey/just). Run `just` for the default build.
 prefix := env_var_or_default("PREFIX", env_var("HOME") / ".local")
 
 # build the binary into the repo
 build:
-    go build -o prowl ./cmd/prowl
+    go build -o matou ./cmd/matou
 
 # build + install to $PREFIX/bin (default ~/.local/bin)
 install:
-    go build -o {{ prefix }}/bin/prowl ./cmd/prowl
+    go build -o {{ prefix }}/bin/matou ./cmd/matou
 
 # build, then run with any extra args (e.g. `just run --once`)
 run *args: build
-    ./prowl {{ args }}
+    ./matou {{ args }}
 
 # format · vet · test — the pre-commit sweep
 check: fmt vet test
@@ -29,5 +29,9 @@ test:
 tidy:
     go mod tidy
 
+# build the static binary in Docker and export it to ./matou (needs BuildKit)
+docker:
+    docker build --output . .
+
 clean:
-    rm -f prowl
+    rm -f matou

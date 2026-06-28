@@ -417,7 +417,7 @@ func (m model) View() string {
 			dim.Render(fmt.Sprintf("   %d match", len(m.view)))
 		footer = dim.Render("↵ go · esc back to nav")
 	default: // nav (vim)
-		prompt = promptSt.Render("prowl") + dim.Render("   j/k nav · / search")
+		prompt = promptSt.Render("matou") + dim.Render("   j/k nav · / search")
 		if m.status != "" {
 			prompt += dim.Render("   ") + statusSt.Render(m.status)
 		}

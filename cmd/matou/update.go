@@ -97,7 +97,7 @@ func (m model) updateNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.applyFilter().moved()
 	case "a": // ask the agent about the selected dir (floating panel)
 		if agentHook == "" {
-			m.status = "set $PROWL_AGENT_CMD to use the agent"
+			m.status = "set $MATOU_AGENT_CMD to use the agent"
 			return m, nil
 		}
 		if it, ok := m.sel(); ok && it.dir != "" {

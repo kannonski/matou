@@ -13,7 +13,7 @@ func TestAgentCacheRoundTrip(t *testing.T) {
 	last := map[string]string{"/p": "what is this"}
 	saveAgentCache(replies, last)
 
-	if _, err := os.Stat(filepath.Join(os.Getenv("XDG_CACHE_HOME"), "prowl", "agent.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(os.Getenv("XDG_CACHE_HOME"), "matou", "agent.json")); err != nil {
 		t.Fatalf("cache file not written: %v", err)
 	}
 	gotReplies, gotLast := loadAgentCache()

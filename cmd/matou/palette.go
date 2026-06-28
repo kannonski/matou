@@ -26,7 +26,7 @@ type layout struct {
 }
 
 func layoutsPath() string {
-	if p := os.Getenv("PROWL_LAYOUTS"); p != "" {
+	if p := os.Getenv("MATOU_LAYOUTS"); p != "" {
 		return p
 	}
 	if p := os.Getenv("KITTY_PALETTE_LAYOUTS"); p != "" {

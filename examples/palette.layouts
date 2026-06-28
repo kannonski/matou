@@ -1,5 +1,5 @@
-# prowl layouts — the single source of truth for the layout picker.
-# Each [name] is one entry; prowl's Go engine reads this file to draw the preview
+# matou layouts — the single source of truth for the layout picker.
+# Each [name] is one entry; matou's Go engine reads this file to draw the preview
 # sketch AND to launch the real panes, so they can never drift.
 #
 #   shape    one of:

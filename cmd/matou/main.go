@@ -1,8 +1,8 @@
-// prowl — a flat fuzzy palette for kitty: jump to an open project tab, or open a directory
+// matou — a flat fuzzy palette for kitty: jump to an open project tab, or open a directory
 // (zoxide + your ~/Project roots) in a chosen layout, with a live preview and per-tab status
 // (focused · running · idle · failed). Layouts come from palette.layouts (TOML). A remote-control
 // client (not a kitten): run inside kitty with allow_remote_control + listen_on. Launched as
-// an overlay tagged user_var prowl=1; it self-toggles (closes a sibling prowl on startup), so
+// an overlay tagged user_var matou=1; it self-toggles (closes a sibling matou on startup), so
 // the bound key opens it once and dismisses it on a second press — no Python kitten needed.
 package main
 
@@ -36,13 +36,13 @@ func main() {
 	flag.Parse()
 	loadConfig()
 
-	// Singleton toggle: prowl is launched as an overlay tagged user_var prowl=1. If one is
+	// Singleton toggle: matou is launched as an overlay tagged user_var matou=1. If one is
 	// already open in this tab, close it and exit (the new overlay flashes briefly, then both
-	// close) — pressing the bound key again dismisses prowl. No kitten needed.
+	// close) — pressing the bound key again dismisses matou. No kitten needed.
 	if !*once {
 		if self, _ := strconv.Atoi(os.Getenv("KITTY_WINDOW_ID")); self != 0 {
 			if tree, err := kittyLS(); err == nil {
-				if other := findOtherProwl(tree, self); other != 0 {
+				if other := findOtherMatou(tree, self); other != 0 {
 					_ = closeWindow(other)
 					return
 				}
@@ -52,7 +52,7 @@ func main() {
 
 	m, err := loadModel()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "prowl: `kitty @ ls` failed — run inside kitty with remote control enabled")
+		fmt.Fprintln(os.Stderr, "matou: `kitty @ ls` failed — run inside kitty with remote control enabled")
 		fmt.Fprintln(os.Stderr, "  (allow_remote_control + listen_on). detail:", err)
 		os.Exit(1)
 	}

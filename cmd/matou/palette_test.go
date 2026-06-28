@@ -36,7 +36,7 @@ func useSampleLayouts(t *testing.T) {
 	if err := os.WriteFile(p, []byte(sampleLayouts), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PROWL_LAYOUTS", p)
+	t.Setenv("MATOU_LAYOUTS", p)
 }
 
 func TestLoadLayouts(t *testing.T) {
@@ -61,7 +61,7 @@ func TestLoadLayouts(t *testing.T) {
 }
 
 func TestLoadLayoutsMissingFile(t *testing.T) {
-	t.Setenv("PROWL_LAYOUTS", filepath.Join(t.TempDir(), "does-not-exist"))
+	t.Setenv("MATOU_LAYOUTS", filepath.Join(t.TempDir(), "does-not-exist"))
 	if ls := loadLayouts(); ls != nil {
 		t.Fatalf("missing file should yield nil, got %v", ls)
 	}

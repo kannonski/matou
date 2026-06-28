@@ -8,7 +8,7 @@ import (
 )
 
 // agentStore is the on-disk persistence of the `a` agent: replies keyed by dir+\x00+instr and
-// the last instruction per dir. prowl is launched fresh on every Ctrl+Shift+O, so without this
+// the last instruction per dir. matou is launched fresh on every Ctrl+Shift+O, so without this
 // the right-pane teaser and the panel would be empty until you re-ask. Loaded on start, saved
 // whenever a reply lands or a question is asked.
 type agentStore struct {
@@ -22,7 +22,7 @@ func agentCachePath() string {
 		home, _ := os.UserHomeDir()
 		dir = filepath.Join(home, ".cache")
 	}
-	return filepath.Join(dir, "prowl", "agent.json")
+	return filepath.Join(dir, "matou", "agent.json")
 }
 
 // loadAgentCache reads the persisted caches (empty maps on a missing/corrupt file).
@@ -45,7 +45,7 @@ func loadAgentCache() (replies, lastInstr map[string]string) {
 }
 
 // saveAgentCache atomically persists the agent caches (pid-tagged temp + rename, so a brief
-// second prowl during the toggle flash can't corrupt the file). Best-effort: errors are
+// second matou during the toggle flash can't corrupt the file). Best-effort: errors are
 // swallowed — a lost cache write just means re-asking.
 func saveAgentCache(replies, lastInstr map[string]string) {
 	p := agentCachePath()

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Sample PROWL_AGENT_CMD — answer an instruction about the selected project, in prowl's
-# floating `a` panel. Enable with:  export PROWL_AGENT_CMD="$HOME/.config/kitty/prowl-agent.sh"
-# prowl calls it as `<this> <dir> "<instruction>"`; print the answer to stdout.
+# Sample MATOU_AGENT_CMD — answer an instruction about the selected project, in matou's
+# floating `a` panel. Enable with:  export MATOU_AGENT_CMD="$HOME/.config/kitty/matou-agent.sh"
+# matou calls it as `<this> <dir> "<instruction>"`; print the answer to stdout.
 set -uo pipefail
 dir=${1:?usage: agent.sh <dir> <instruction>}
 instr=${2:?usage: agent.sh <dir> <instruction>}
@@ -23,5 +23,5 @@ uncommitted:
 $status
 README (head):
 $readme" \
-  --model "${PROWL_MODEL:-sonnet}" \
+  --model "${MATOU_MODEL:-sonnet}" \
   --allowedTools "Read" "Bash(git:*)" "Bash(rg:*)" "Bash(ls:*)" "Bash(cat:*)" 2>/dev/null

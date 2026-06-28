@@ -1,4 +1,4 @@
-module github.com/kannonski/prowl
+module github.com/kannonski/matou
 
 go 1.26.4
 
