@@ -50,9 +50,14 @@ type model struct {
 	preview string
 	cache   map[string]string // dir:/layout: → local preview text
 
-	agentCache map[string]string // dir → agent-generated preview (the hook's output)
-	pending    string            // dir whose agent preview is currently being generated
-	settleGen  int               // debounce generation for the settle tick
+	// `:` agent: a floating panel over the palette
+	agentInput   string            // instruction being typed
+	agentDir     string            // dir the agent acts on (captured when : is pressed)
+	agentName    string            // panel title
+	agentResult  string            // the reply ("" = none yet)
+	agentWorking bool              // true while the hook runs
+	agentOff     int               // scroll offset in the reply
+	replyCache   map[string]string // dir+\x00+instr → reply
 
 	w, h   int
 	status string
@@ -160,16 +165,7 @@ func (m model) refreshPreview() model {
 	case it.kind == "newwin":
 		m.preview = "Enter — move the pane you came from into a new OS window."
 	case it.dir != "":
-		local := m.cached("dir:"+it.dir, func() string { return dirPreview(it.dir) })
-		head := ""
-		if c, ok := m.agentCache[it.dir]; ok {
-			if c != "" { // the hook's brief, on top of the local preview (empty = nothing to add)
-				head = c + "\n\n"
-			}
-		} else if previewHook != "" && m.pending == it.dir {
-			head = "⏳ asking the agent…\n\n"
-		}
-		m.preview = head + local
+		m.preview = m.cached("dir:"+it.dir, func() string { return dirPreview(it.dir) })
 	default:
 		m.preview = ""
 	}

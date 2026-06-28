@@ -115,11 +115,60 @@ func (m model) navActions() string {
 		a = append(a, "↵ open")
 	}
 	a = append(a, "m move")
+	if agentHook != "" {
+		a = append(a, ": agent")
+	}
 	if m.cwd != "" {
 		a = append(a, ". relayout")
 	}
 	a = append(a, "/ search", "q quit")
 	return strings.Join(a, " · ")
+}
+
+// agentPanel renders the floating `:` agent panel — a centered box (solid backdrop) with the
+// instruction line, the reply (scrollable), over the palette.
+func (m model) agentPanel() string {
+	w, h := m.w, m.h
+	if w <= 0 {
+		w = 100
+	}
+	if h <= 0 {
+		h = 30
+	}
+	pw := max(40, min(w-8, 90))
+	ph := max(8, min(h-6, 24))
+	innerW := pw - 4
+	bodyH := max(1, ph-6)
+
+	header := promptSt.Render("🤖 " + trunc(m.agentName, innerW-3))
+	input := promptSt.Render(": ") + trunc(m.agentInput, innerW-3) + selSt.Render("▌")
+	rule := ruleSt.Render(strings.Repeat("─", innerW))
+
+	body := make([]string, bodyH)
+	switch {
+	case m.agentWorking:
+		body[0] = runG.Render("🤖 working…")
+	case m.agentResult == "":
+		body[0] = dim.Render("type an instruction, then enter")
+	default:
+		src := strings.Split(m.agentResult, "\n")
+		off := max(0, min(m.agentOff, len(src)-bodyH))
+		for i := range bodyH {
+			if off+i < len(src) {
+				l := src[off+i]
+				if !strings.Contains(l, "\x1b") { // plain → safe to truncate
+					l = trunc(l, innerW)
+				}
+				body[i] = l
+			}
+		}
+	}
+	footer := dim.Render("enter run · ↑↓ scroll · esc close")
+
+	content := header + "\n" + input + "\n" + rule + "\n" + strings.Join(body, "\n") + "\n" + footer
+	box := lipgloss.NewStyle().Width(innerW).Padding(0, 1).
+		Border(lipgloss.RoundedBorder()).BorderForeground(borderC).Render(content)
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
 }
 
 // windowRange returns the [start,end) slice of n items to show in h rows, centring cur.
@@ -179,6 +228,9 @@ func (m model) rightContent(rightW, bodyH int) string {
 func (m model) View() string {
 	if m.err != "" {
 		return errSt.Render("  " + m.err)
+	}
+	if m.mode == "agent" {
+		return m.agentPanel()
 	}
 	w, h := m.w, m.h
 	if w <= 0 {

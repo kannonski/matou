@@ -6,22 +6,17 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func (m model) Init() tea.Cmd { return settleTick(m.settleGen) }
+func (m model) Init() tea.Cmd { return nil }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
-	case previewMsg: // an agent preview came back
-		m.agentCache[msg.dir] = msg.text
-		if m.pending == msg.dir {
-			m.pending = ""
+	case agentMsg: // the `:` agent's reply came back
+		m.replyCache[msg.dir+"\x00"+msg.instr] = msg.text
+		if m.mode == "agent" && m.agentDir == msg.dir {
+			m.agentResult, m.agentWorking, m.agentOff = msg.text, false, 0
 		}
-		if it, ok := m.sel(); ok && it.dir == msg.dir {
-			m = m.refreshPreview()
-		}
-	case settleMsg:
-		return m.settle(msg.gen)
 	case tea.KeyMsg:
 		switch m.mode {
 		case "layout":
@@ -32,6 +27,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateFilter(msg)
 		case "move":
 			return m.updateMove(msg)
+		case "agent":
+			return m.updateAgent(msg)
 		default:
 			return m.updateNav(msg)
 		}
@@ -39,32 +36,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// moved refreshes the preview after a cursor/selection change and (re)arms the settle
-// debounce, so the agent hook fires only once the cursor rests on a row.
+// moved refreshes the preview after a cursor/selection change.
 func (m model) moved() (model, tea.Cmd) {
-	m = m.refreshPreview()
-	if previewHook == "" {
-		return m, nil
-	}
-	m.settleGen++
-	return m, settleTick(m.settleGen)
-}
-
-// settle fires when the cursor has rested: if the selected dir has no agent preview yet,
-// kick off the hook (the pane shows ⏳ until it returns).
-func (m model) settle(gen int) (tea.Model, tea.Cmd) {
-	if gen != m.settleGen || previewHook == "" || m.mode == "layout" || m.mode == "rename" {
-		return m, nil
-	}
-	it, ok := m.sel()
-	if !ok || it.dir == "" {
-		return m, nil
-	}
-	if _, done := m.agentCache[it.dir]; done || m.pending == it.dir {
-		return m, nil
-	}
-	m.pending = it.dir
-	return m.refreshPreview(), previewCmd(it.dir)
+	return m.refreshPreview(), nil
 }
 
 // actOn performs a row's primary action: jump (open) · move (newtab/newwin) · pick-a-layout
@@ -109,6 +83,16 @@ func (m model) updateNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.mode, m.query = "filter", ""
 		return m.applyFilter().moved()
+	case ":": // instruct the agent about the selected dir (floating panel)
+		if agentHook == "" {
+			m.status = "set $PROWL_AGENT_CMD to use the agent"
+			return m, nil
+		}
+		if it, ok := m.sel(); ok && it.dir != "" {
+			m.mode, m.agentDir, m.agentName = "agent", it.dir, nameOf(it)
+			m.agentInput, m.agentResult, m.agentWorking, m.agentOff = "", "", false, 0
+		}
+		return m, nil
 	case "m": // move a pane → enter move mode (pick the pane, then a destination)
 		m.mode, m.moveSrc, m.moveSrcTab, m.moveSrcName = "move", 0, 0, ""
 		return m.applyFilter().moved()
@@ -219,6 +203,52 @@ func (m model) updateMove(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		_ = moveToTab(m.moveSrc, it.tabID) // stage B: into the highlighted tab
 		return m, tea.Quit
+	}
+	return m, nil
+}
+
+// updateAgent drives the floating `:` panel: type an instruction, enter runs it (cached per
+// dir+instruction), up/down scroll the reply, esc closes.
+func (m model) updateAgent(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyCtrlC:
+		return m, tea.Quit
+	case tea.KeyEsc:
+		m.mode = ""
+		return m, nil
+	case tea.KeyEnter:
+		instr := strings.TrimSpace(m.agentInput)
+		if instr == "" {
+			return m, nil
+		}
+		if c, ok := m.replyCache[m.agentDir+"\x00"+instr]; ok {
+			m.agentResult, m.agentWorking, m.agentOff = c, false, 0
+			return m, nil
+		}
+		m.agentResult, m.agentWorking, m.agentOff = "", true, 0
+		return m, agentCmd(m.agentDir, instr)
+	case tea.KeyUp, tea.KeyCtrlP:
+		if m.agentOff > 0 {
+			m.agentOff--
+		}
+		return m, nil
+	case tea.KeyDown, tea.KeyCtrlN:
+		m.agentOff++ // clamped at render
+		return m, nil
+	case tea.KeyBackspace:
+		if r := []rune(m.agentInput); len(r) > 0 {
+			m.agentInput = string(r[:len(r)-1])
+		}
+		return m, nil
+	case tea.KeyCtrlU:
+		m.agentInput = ""
+		return m, nil
+	case tea.KeySpace:
+		m.agentInput += " "
+		return m, nil
+	case tea.KeyRunes:
+		m.agentInput += string(msg.Runes)
+		return m, nil
 	}
 	return m, nil
 }

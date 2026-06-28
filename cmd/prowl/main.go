@@ -17,7 +17,7 @@ import (
 )
 
 func loadModel() (model, error) {
-	m := model{cache: map[string]string{}, agentCache: map[string]string{}}
+	m := model{cache: map[string]string{}, replyCache: map[string]string{}}
 	m = m.reload()
 	if m.err != "" {
 		return m, errors.New(m.err)

@@ -31,9 +31,10 @@ Vim navigation; search lives behind `/`.
 | Key | Action |
 |-----|--------|
 | `j`/`k` · `↑`/`↓` | move (`g`/`G` top/bottom) |
-| `l` / `enter` | open: jump to a tab · pick-a-layout for a dir · move (move-targets) |
+| `l` / `enter` | open: jump to a tab · pick-a-layout for a dir |
 | `m` | move a pane — pick the pane, then `↵` to drop it into a destination tab (`esc` steps back) |
 | `.` | relayout the current dir (layout picker for where you launched) |
+| `:` | instruct the agent about the selected dir (floating panel) |
 | `x` | close the highlighted tab |
 | `r` | rename the highlighted tab |
 | `h` | back out (in the layout picker → back to the list) |
@@ -51,19 +52,19 @@ to search the full set.
   reinventing layouts.
 - Optional: `zoxide` (project frecency), `git` + `ls` (previews).
 
-## Right-pane agent (optional)
+## Agent — `:` (optional)
 
-Set `$PROWL_PREVIEW_CMD` to a command and prowl runs it for the selected directory and
-shows its output **on top of** the git + listing preview — e.g. an AI brief of the repo.
-It's **debounced** (only fires for rows you pause on, ~350 ms), **async** (nav stays
-snappy; the pane shows `⏳` until it returns), and **cached** per session. Unset = no hook.
+Press **`:`** to instruct an agent about the selected directory. A floating panel opens
+(over the palette); type an instruction, `enter` runs `$PROWL_AGENT_CMD <dir> "<instruction>"`
+**async** (`🤖 working…` until it returns), the reply fills the panel (`↑↓` scroll), `esc`
+closes. Replies are **cached** per dir+instruction. Unset = `:` is disabled.
 
 ```sh
-export PROWL_PREVIEW_CMD="$HOME/.config/kitty/prowl-preview.sh"   # receives <dir> as $1
+export PROWL_AGENT_CMD="$HOME/.config/kitty/prowl-agent.sh"   # called: <cmd> <dir> "<instruction>"
 ```
 
-See [`examples/agent-preview.sh`](examples/agent-preview.sh) for a sample that briefs the
-repo with an LLM (falls back to `git log` when none is available).
+See [`examples/agent.sh`](examples/agent.sh) for a sample that answers with an LLM (`claude`),
+grounded in the repo's git state + README, with read-only tools.
 
 ## Install
 
