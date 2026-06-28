@@ -42,6 +42,53 @@ func trunc(s string, n int) string {
 	return string(r[:n-1]) + "…"
 }
 
+// wrapLines word-wraps s to width w and returns the flattened display lines. ANSI-bearing
+// lines pass through untouched (wrapping them would split escape sequences); plain prose is
+// wrapped on spaces, with overlong words hard-broken. Used for the agent answer so long
+// paragraphs read in full instead of being truncated with an ellipsis.
+func wrapLines(s string, w int) []string {
+	if w < 1 {
+		w = 1
+	}
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		switch {
+		case line == "":
+			out = append(out, "")
+		case strings.Contains(line, "\x1b"):
+			out = append(out, line)
+		default:
+			out = append(out, wrapPlain(line, w)...)
+		}
+	}
+	return out
+}
+
+func wrapPlain(line string, w int) []string {
+	var out []string
+	cur := make([]rune, 0, w)
+	hardBreak := func(wr []rune) []rune { // emit full-width chunks of an overlong word
+		for len(wr) > w {
+			out = append(out, string(wr[:w]))
+			wr = wr[w:]
+		}
+		return wr
+	}
+	for _, word := range strings.Split(line, " ") {
+		wr := []rune(word)
+		switch {
+		case len(cur) == 0:
+			cur = append(cur, hardBreak(wr)...)
+		case len(cur)+1+len(wr) <= w:
+			cur = append(append(cur, ' '), wr...)
+		default:
+			out = append(out, string(cur))
+			cur = append(cur[:0], hardBreak(wr)...)
+		}
+	}
+	return append(out, string(cur))
+}
+
 func glyphRune(it item) string {
 	if it.kind != "open" {
 		return "+" // project
@@ -172,16 +219,12 @@ func (m model) agentPanel() string {
 	case m.agentResult == "":
 		body[0] = dim.Render("type a question, then enter")
 	default:
-		src := strings.Split(m.agentResult, "\n")
+		src := wrapLines(m.agentResult, innerW) // wrap, don't truncate — read the whole answer
 		total = len(src)
 		off = max(0, min(m.agentOff, max(0, total-bodyH)))
 		for i := range bodyH {
 			if off+i < total {
-				l := src[off+i]
-				if !strings.Contains(l, "\x1b") { // plain → safe to truncate
-					l = trunc(l, innerW)
-				}
-				body[i] = l
+				body[i] = src[off+i]
 			}
 		}
 	}
@@ -271,11 +314,12 @@ func (m model) rightContent(rightW, bodyH int) string {
 	return clampLines(strings.Join(secs, "\n\n"), rightW, bodyH)
 }
 
-// agentSection is the right-pane agent teaser: the question + at most 10 reply lines. The
-// full, scrollable answer lives in the `a` panel (press `a` to read it).
+// agentSection is the right-pane agent teaser: the question + at most 10 wrapped reply lines
+// (wrapped, not truncated, so it reads as prose). The full, scrollable answer lives in the `a`
+// panel (press `a` to read it).
 func agentSection(question, reply string, w int) string {
 	const maxReply = 10
-	lines := strings.Split(strings.TrimRight(reply, "\n"), "\n")
+	lines := wrapLines(strings.TrimRight(reply, "\n"), w)
 	clipped := false
 	if len(lines) > maxReply {
 		lines, clipped = lines[:maxReply], true
