@@ -13,20 +13,22 @@ import (
 func fg(hex string) lipgloss.Style { return lipgloss.NewStyle().Foreground(lipgloss.Color(hex)) }
 
 var (
-	promptSt = fg("#cba6f7").Bold(true) // mauve
-	selSt    = fg("#f5c2e7").Bold(true) // pink
-	dim      = fg("#6c7086")            // overlay0
-	metaSt   = fg("#7f849c")            // overlay1 — inline cmd/git
-	dirSt    = fg("#a6adc8")            // subtext0 — project names
-	openSt   = fg("#89b4fa")            // blue — open tab names
-	focG     = fg("#a6e3a1")            // green
-	runG     = fg("#fab387")            // peach
-	failG    = fg("#f38ba8")            // red
-	errSt    = fg("#f38ba8")
-	statusSt = fg("#f5c2e7")
-	barStyle = lipgloss.NewStyle().Background(lipgloss.Color("#45475a")).Foreground(lipgloss.Color("#cdd6f4"))
-	borderC  = lipgloss.Color("#585b70")
-	ruleSt   = lipgloss.NewStyle().Foreground(borderC)
+	promptSt  = fg("#cba6f7").Bold(true) // mauve
+	selSt     = fg("#f5c2e7").Bold(true) // pink
+	dim       = fg("#6c7086")            // overlay0
+	metaSt    = fg("#7f849c")            // overlay1 — inline cmd/git
+	dirSt     = fg("#a6adc8")            // subtext0 — project names
+	openSt    = fg("#89b4fa")            // blue — open tab names
+	focG      = fg("#a6e3a1")            // green
+	runG      = fg("#fab387")            // peach
+	failG     = fg("#f38ba8")            // red
+	errSt     = fg("#f38ba8")
+	statusSt  = fg("#f5c2e7")
+	barStyle  = lipgloss.NewStyle().Background(lipgloss.Color("#45475a")).Foreground(lipgloss.Color("#cdd6f4"))
+	borderC   = lipgloss.Color("#585b70")
+	ruleSt    = lipgloss.NewStyle().Foreground(borderC)
+	lavender  = fg("#b4befe")
+	sectionSt = lavender.Bold(true) // right-pane section headers
 )
 
 func trunc(s string, n int) string {
@@ -208,31 +210,61 @@ func (m model) leftRow(viewIdx, leftW int, selected bool) string {
 	return out
 }
 
-// rightContent returns exactly bodyH preview lines (lipgloss.Height only pads, never
-// truncates — so we must cap here or a long listing overruns the frame).
+// rightContent composes the right pane as clear sections: the ambient `:` agent teaser
+// (the question + at most 10 reply lines — the full answer is read in the `:` panel), then
+// the dir's REPO + FILES (built in dirPreview). Returns exactly bodyH lines (lipgloss.Height
+// only pads, never truncates — so we cap here or a long listing overruns the frame).
 func (m model) rightContent(rightW, bodyH int) string {
-	content := m.preview
-	if m.mode != "layout" { // ambient `:` agent state for the selected dir, above the git+listing
-		if it, ok := m.sel(); ok && it.dir != "" {
-			switch {
-			case m.workingDirs[it.dir]:
-				content = runG.Render("🤖 working…") + "\n\n" + content
-			default:
-				if li := m.lastInstr[it.dir]; li != "" {
-					if r := m.replyCache[it.dir+"\x00"+li]; r != "" {
-						content = promptSt.Render("🤖 "+li) + "\n" + r + "\n\n" + content
-					}
+	if m.mode == "layout" { // a layout sketch — shown as-is, no sections
+		return clampLines(m.preview, rightW, bodyH)
+	}
+	var secs []string
+	if it, ok := m.sel(); ok && it.dir != "" {
+		switch {
+		case m.workingDirs[it.dir]:
+			secs = append(secs, sectionHead("AGENT")+"\n"+runG.Render("🤖 working…"))
+		default:
+			if li := m.lastInstr[it.dir]; li != "" {
+				if r := m.replyCache[it.dir+"\x00"+li]; r != "" {
+					secs = append(secs, agentSection(li, r, rightW))
 				}
 			}
 		}
 	}
-	src := strings.Split(content, "\n")
-	out := make([]string, bodyH)
-	for i := range bodyH {
+	if m.preview != "" {
+		secs = append(secs, m.preview) // REPO + FILES sections (built in dirPreview)
+	}
+	return clampLines(strings.Join(secs, "\n\n"), rightW, bodyH)
+}
+
+// agentSection is the right-pane agent teaser: the question + at most 10 reply lines. The
+// full, scrollable answer lives in the `:` panel (press `:` to read it).
+func agentSection(question, reply string, w int) string {
+	const maxReply = 10
+	lines := strings.Split(strings.TrimRight(reply, "\n"), "\n")
+	clipped := false
+	if len(lines) > maxReply {
+		lines, clipped = lines[:maxReply], true
+	}
+	body := strings.Join(lines, "\n")
+	if clipped {
+		body += "\n" + dim.Render("… press : for the full answer")
+	}
+	return sectionHead("AGENT") + "\n" + promptSt.Render(trunc("🤖 "+question, w)) + "\n" + body
+}
+
+// sectionHead renders a right-pane section label, e.g. "▌ REPO".
+func sectionHead(title string) string { return sectionSt.Render("▌ " + title) }
+
+// clampLines fits text into exactly h rows, truncating each plain (non-ANSI) line to w runes.
+func clampLines(s string, w, h int) string {
+	src := strings.Split(s, "\n")
+	out := make([]string, h)
+	for i := range h {
 		if i < len(src) {
 			l := src[i]
 			if !strings.Contains(l, "\x1b") { // plain text → safe to truncate by rune width
-				l = trunc(l, rightW)
+				l = trunc(l, w)
 			}
 			out[i] = l
 		}
@@ -282,7 +314,7 @@ func (m model) View() string {
 	case "filter":
 		prompt = promptSt.Render("❯ ") + m.query + selSt.Render("▌") +
 			dim.Render(fmt.Sprintf("   %d match", len(m.view)))
-		footer = dim.Render("↵ go · ^s move · ^x kill · ^r rename · ^d prune · esc")
+		footer = dim.Render("↵ go · esc back to nav")
 	default: // nav (vim)
 		prompt = promptSt.Render("prowl") + dim.Render("   j/k nav · / search")
 		if m.status != "" {

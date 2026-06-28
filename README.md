@@ -21,8 +21,9 @@ The list is just jump/open targets:
 Actions live on keys, not rows: `.` relayout the current dir · `m` move a pane (pick the
 pane, then drop it into a destination tab).
 
-The right pane previews the selection: git branch + change count + listing for a directory,
-or the layout sketch when you're choosing one.
+The right pane previews the selection in clear sections — **REPO** (git branch + change
+count) and **FILES** (listing) for a directory, the layout sketch when you're choosing one,
+and an **AGENT** teaser on top once you've asked the `:` agent something (see below).
 
 ## Keys
 
@@ -59,9 +60,10 @@ Press **`:`** to instruct an agent about the selected directory. A floating pane
 **async** (`🤖 working…` until it returns), the reply fills the panel (`↑↓` scroll), `esc`
 closes. Replies are **cached** per dir+instruction. Unset = `:` is disabled.
 
-Since it's async you needn't wait: close the panel and keep browsing — the **right pane**
-shows `🤖 working…` for that dir, then the reply (with the question) once it lands, and keeps
-it there when you revisit.
+Since it's async you needn't wait: close the panel and keep browsing — the right pane's
+**AGENT** section shows `🤖 working…` for that dir, then a **10-line teaser** of the answer
+(with the question) once it lands, and keeps it there when you revisit. To read the full
+answer, press `:` again — the floating panel is where the whole reply lives (`↑↓` to scroll).
 
 ```sh
 export PROWL_AGENT_CMD="$HOME/.config/kitty/prowl-agent.sh"   # called: <cmd> <dir> "<instruction>"
