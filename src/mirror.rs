@@ -782,6 +782,16 @@ function fit(leaf){const el=leaf.el,h=leaf.host,nw=h.offsetWidth,nh=h.offsetHeig
   if(!nw||!nh||!el.clientWidth)return;
   const s=Math.min((el.clientWidth-2)/nw,(el.clientHeight-2)/nh);
   h.style.transform='scale('+(s>0?s:0.01)+')';}
+// re-poll the window's *real* grid — kitty re-tiles each window on split/close, so the grid shrinks
+// with the box and the scale stays consistent across panes (without this the old grid is squeezed
+// into an ever-smaller box and the pane zooms way out).
+function refit(leaf){
+  fetch('/size?w='+leaf.win).then(r=>r.json()).then(s=>{
+    if(s&&s.cols&&s.rows)leaf.term.resize(s.cols,s.rows);
+    fit(leaf);
+  }).catch(()=>fit(leaf));
+}
+function refitAll(){setTimeout(()=>leaves.forEach(refit),60);setTimeout(()=>leaves.forEach(refit),300);}
 
 function btn(cls,txt,fn){const b=document.createElement('button');b.className=cls;b.textContent=txt;
   b.onclick=e=>{e.stopPropagation();fn();};return b;}
@@ -800,7 +810,7 @@ function makeLeaf(win){
   term.open(host);leaf.term=term;
   el.addEventListener('mousedown',()=>setActive(leaf));
   term.onData(d=>fetch('/key?w='+win,{method:'POST',body:d}));
-  fetch('/size?w='+win).then(r=>r.json()).then(s=>{term.resize(s.cols,s.rows);fit(leaf);}).catch(()=>{});
+  refit(leaf); // size to the real window grid, then scale to the box
   const es=new EventSource('/stream?w='+win);leaf.es=es;
   es.onmessage=e=>{term.write(Uint8Array.from(atob(e.data),c=>c.charCodeAt(0)));fit(leaf);};
   es.addEventListener('end',endSession);
@@ -828,6 +838,7 @@ function split(leaf,side){
     leaf.parent=sp;nl.parent=sp;
     sp.el.append(leaf.el,nl.el);   // then leaf + new pane live inside sp
     setActive(nl);
+    refitAll();                    // kitty halved the old window's grid — match it everywhere
   }).catch(()=>{bar.textContent='kittyweb · split failed';});
 }
 
@@ -840,6 +851,7 @@ function closeLeaf(leaf){
   const sib=p.a===leaf?p.b:p.a;    // sibling is promoted into p's slot
   replaceNode(p,sib);
   if(active===leaf)setActive(firstLeaf(sib));
+  refitAll();                      // kitty reclaimed the closed pane's space — match the new grids
 }
 function firstLeaf(n){while(n.kind!=='leaf')n=n.a;return n;}
 
