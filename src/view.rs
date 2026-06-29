@@ -150,29 +150,11 @@ fn layout_items(m: &Model, width: u16) -> Vec<ListItem<'static>> {
         .collect()
 }
 
-fn mirror_items(width: u16) -> Vec<ListItem<'static>> {
-    crate::model::MIRROR_ITEMS
-        .iter()
-        .map(|(name, desc)| {
-            let nm = format!("{name:<16}");
-            let desc = trunc(desc, (width as usize).saturating_sub(20).max(1));
-            ListItem::new(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(nm, Style::default().fg(theme::MAUVE)),
-                Span::raw(" "),
-                Span::styled(desc, Style::default().fg(theme::OVERLAY0)),
-            ]))
-        })
-        .collect()
-}
-
 fn render_list(m: &Model, f: &mut Frame, area: Rect) {
     if area.width < 2 || area.height < 1 {
         return;
     }
-    let (items, sel) = if m.mode == "mirror" {
-        (mirror_items(area.width), m.mir_cur)
-    } else if m.mode == "layout" {
+    let (items, sel) = if m.mode == "layout" {
         (layout_items(m, area.width), m.lay_cur)
     } else {
         (row_items(m, area.width), m.cur)
@@ -207,18 +189,6 @@ fn agent_teaser(question: &str, reply: &str, w: usize) -> Vec<Line<'static>> {
 
 fn render_right(m: &Model, f: &mut Frame, area: Rect) {
     if area.width < 2 || area.height < 1 {
-        return;
-    }
-    if m.mode == "mirror" {
-        let hint = Style::default().fg(theme::OVERLAY0);
-        f.render_widget(
-            Paragraph::new(vec![
-                Line::from(""),
-                Line::from(Span::styled("  opens in your browser — view + control.", hint)),
-                Line::from(Span::styled("  keeps serving after matou closes.", hint)),
-            ]),
-            area,
-        );
         return;
     }
     if m.mode == "layout" {
@@ -277,8 +247,12 @@ fn cursor() -> Span<'static> {
 fn header_line(m: &Model) -> Line<'static> {
     match m.mode.as_str() {
         "layout" => Line::from(vec![
-            prompt(&format!("layout for {}", crate::model::basename(&m.lay_dir))),
-            dim("   ↵ build · esc back"),
+            prompt(&format!(
+                "{} {}",
+                if m.lay_share { "share — layout for" } else { "layout for" },
+                crate::model::basename(&m.lay_dir)
+            )),
+            dim(if m.lay_share { "   ↵ build + share · esc back" } else { "   ↵ build · esc back" }),
         ]),
         "rename" => Line::from(vec![prompt("rename tab ❯ "), Span::raw(m.rinput.clone()), cursor()]),
         "move" => {
@@ -288,7 +262,6 @@ fn header_line(m: &Model) -> Line<'static> {
                 Line::from(prompt(&format!("move {} → which tab?", m.move_src_name)))
             }
         }
-        "mirror" => Line::from(vec![prompt("share / stream"), dim("   ↵ start · esc back")]),
         "filter" => Line::from(vec![
             prompt("❯ "),
             Span::raw(m.query.clone()),
@@ -308,11 +281,11 @@ fn header_line(m: &Model) -> Line<'static> {
 
 fn footer_line(m: &Model, w: usize) -> Line<'static> {
     let f = match m.mode.as_str() {
+        "layout" if m.lay_share => "j/k pick · l/↵ build + share · h back".to_string(),
         "layout" => "j/k pick · l/↵ build · h back".to_string(),
         "rename" => "enter save · esc cancel".to_string(),
         "move" if m.move_src == 0 => "j/k pick · ↵ choose this pane · esc cancel".to_string(),
         "move" => "↵ move into this tab · esc back".to_string(),
-        "mirror" => "j/k pick · l/↵ start · h back".to_string(),
         "filter" => "↵ go · esc back to nav".to_string(),
         _ => trunc(&nav_actions(m), w),
     };
