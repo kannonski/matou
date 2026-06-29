@@ -23,16 +23,25 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 // (cert hash as dotted-hex, quic port) — set once at startup if WebTransport comes up, then read
 // by page() to bootstrap the browser's serverCertificateHashes. Empty hash ⇒ SSE-only.
 static WT_INFO: OnceLock<(String, u16)> = OnceLock::new();
 
-// Set by the watchdog when the mirrored window is gone, so connected SSE clients get a clean
-// `event: end` (→ the page closes its own tab) before the process exits a moment later.
+// Set by the watchdog when the workspace is gone, so connected SSE clients get a clean `event: end`
+// (→ the page closes its own tab) before the process exits a moment later.
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+// kittyweb workspace lifecycle. OWNED ⇒ the daemon launched a hidden OS window for this session
+// and must tear it down when the browser is gone. STREAMS counts live SSE panes and SEEN_CLIENT
+// flips once a browser has ever connected — together they detect the browser disconnecting.
+// WORKSPACE_TAB is the tab to close on an owned teardown (-1 until resolved).
+static OWNED: AtomicBool = AtomicBool::new(false);
+static STREAMS: AtomicUsize = AtomicUsize::new(0);
+static SEEN_CLIENT: AtomicBool = AtomicBool::new(false);
+static WORKSPACE_TAB: AtomicI64 = AtomicI64::new(-1);
 
 /// matou's config dir (where the mirror keeps its pidfile + ticket).
 pub(crate) fn home() -> PathBuf {
@@ -77,17 +86,56 @@ fn stop(port: u16) -> Result<()> {
     Ok(())
 }
 
+/// End this mirror session and exit. An owned session (a hidden OS-window workspace) gets its
+/// windows closed first; either way connected pages get `event: end` before the process goes.
+fn shutdown_now() -> ! {
+    if OWNED.load(Ordering::Relaxed) {
+        close_workspace();
+    }
+    SHUTDOWN.store(true, Ordering::Relaxed);
+    let _ = std::fs::remove_file(pidfile());
+    std::thread::sleep(Duration::from_millis(300));
+    std::process::exit(0);
+}
+
+/// Close every window in the owned workspace tab — the last one closing takes its hidden OS window
+/// with it, so a project workspace leaves nothing behind in kitty.
+fn close_workspace() {
+    let tab = WORKSPACE_TAB.load(Ordering::Relaxed);
+    if tab < 0 {
+        return;
+    }
+    let Ok(out) = Command::new("kitty").args(["@", "ls"]).output() else { return };
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else { return };
+    for ow in v.as_array().into_iter().flatten() {
+        for t in ow["tabs"].as_array().into_iter().flatten() {
+            if t["id"].as_i64() != Some(tab) {
+                continue;
+            }
+            for w in t["windows"].as_array().into_iter().flatten() {
+                if let Some(id) = w["id"].as_u64() {
+                    let _ = Command::new("kitty")
+                        .args(["@", "close-window", "--match", &format!("id:{id}")])
+                        .status();
+                }
+            }
+        }
+    }
+}
+
 pub fn run(args: &[String]) -> Result<()> {
     let mut window: Option<String> = None;
     let mut port: u16 = 9123;
     let mut bind = "127.0.0.1".to_string();
     let mut do_stop = false;
     let mut p2p = false;
+    let mut owned = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--stop" => do_stop = true,
             "--p2p" => p2p = true,
+            "--owned" => owned = true,
             "--window" | "-w" => {
                 window = args.get(i + 1).cloned();
                 i += 1;
@@ -113,6 +161,7 @@ pub fn run(args: &[String]) -> Result<()> {
     }
     let window = window.context("usage: chatons mirror --window <id> [--port <p>] [--bind <addr>]")?;
     let matchspec = format!("id:{window}");
+    OWNED.store(owned, Ordering::Relaxed);
 
     // bind, retrying briefly so a just-killed predecessor has time to release the port
     let mut listener = None;
@@ -165,10 +214,26 @@ pub fn run(args: &[String]) -> Result<()> {
     {
         let win = window.clone();
         let tab_id = tab_of_window(&window);
+        if let Some(t) = tab_id {
+            WORKSPACE_TAB.store(t, Ordering::Relaxed);
+        }
         std::thread::spawn(move || {
             let mut misses = 0;
+            let mut gone = 0;
             loop {
                 std::thread::sleep(Duration::from_secs(2));
+                // browser gone (every pane's SSE dropped after one ever connected) → tear down:
+                // an owned workspace gets its hidden windows closed, otherwise we just stop serving.
+                if SEEN_CLIENT.load(Ordering::Relaxed) && STREAMS.load(Ordering::Relaxed) == 0 {
+                    gone += 1;
+                    if gone >= 3 {
+                        // ~6s with no panes — longer than EventSource's reconnect, so a transient
+                        // drop won't trip it. /bye (sendBeacon on tab close) handles the fast path.
+                        shutdown_now();
+                    }
+                } else {
+                    gone = 0;
+                }
                 let alive = match tab_id {
                     Some(t) => tab_alive(t),
                     None => window_exists(&win),
@@ -177,12 +242,7 @@ pub fn run(args: &[String]) -> Result<()> {
                     Some(false) => {
                         misses += 1;
                         if misses >= 2 {
-                            // Tell connected pages to close themselves, give the SSE loops one
-                            // poll cycle to emit `event: end`, then go.
-                            SHUTDOWN.store(true, Ordering::Relaxed);
-                            let _ = std::fs::remove_file(pidfile());
-                            std::thread::sleep(Duration::from_millis(400));
-                            std::process::exit(0);
+                            shutdown_now();
                         }
                     }
                     _ => misses = 0, // alive, or a transient `kitty @ ls` failure → don't exit
@@ -285,6 +345,13 @@ fn handle(mut stream: TcpStream, seed: &str) -> Result<()> {
             }
             write!(stream, "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")?;
         }
+        ("POST", "/bye") => {
+            // sent by the page on tab close (sendBeacon) → end the session (owned workspaces also
+            // get their hidden windows closed). Never returns.
+            write!(stream, "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")?;
+            let _ = stream.flush();
+            shutdown_now();
+        }
         _ => write!(stream, "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n")?,
     }
     Ok(())
@@ -299,14 +366,17 @@ fn query_param(query: &str, key: &str) -> Option<String> {
 }
 
 /// Split window `w` (`right` → vsplit, else `down`/hsplit) and return the new window's id. The new
-/// pane inherits `w`'s cwd. `--next-to` only honours a target that's in the *active* tab, so focus
-/// `w` first — otherwise a split lands in whatever tab the user last touched. `--keep-focus` then
-/// leaves focus on `w` (the new pane is grafted in beside it).
+/// pane inherits `w`'s cwd. `--next-to` only honours a target in the *active* tab, so for an
+/// in-place (not owned) workspace focus `w` first — otherwise the split lands in whatever tab the
+/// user last touched. An owned workspace is the sole tab of its hidden OS window (so `--next-to`
+/// already resolves there) and focusing it would un-hide it, so we skip the focus.
 fn split_window(w: &str, side: &str) -> Option<i64> {
     let loc = if side == "down" { "hsplit" } else { "vsplit" };
-    let _ = Command::new("kitty")
-        .args(["@", "focus-window", "--match", &format!("id:{w}")])
-        .status();
+    if !OWNED.load(Ordering::Relaxed) {
+        let _ = Command::new("kitty")
+            .args(["@", "focus-window", "--match", &format!("id:{w}")])
+            .status();
+    }
     let mut args = vec![
         "@".to_string(),
         "launch".into(),
@@ -349,11 +419,12 @@ pub(crate) struct FrameSource {
     prev: Vec<Vec<u8>>,
     first: bool,
     idle: u32,
+    empty_streak: u32, // consecutive empty reads ⇒ the window likely went away
 }
 
 impl FrameSource {
     pub(crate) fn new() -> Self {
-        Self { conn: None, prev: Vec::new(), first: true, idle: 0 }
+        Self { conn: None, prev: Vec::new(), first: true, idle: 0, empty_streak: 0 }
     }
 
     /// Poll once: the bytes to write to the client terminal if the screen changed (a full repaint
@@ -361,8 +432,10 @@ impl FrameSource {
     pub(crate) fn poll(&mut self, matchspec: &str) -> Option<Vec<u8>> {
         let body = sgr_to_legacy(&get_screen(&mut self.conn, matchspec));
         if body.is_empty() {
+            self.empty_streak = self.empty_streak.saturating_add(1);
             return None;
         }
+        self.empty_streak = 0;
         let cur: Vec<Vec<u8>> = body.split(|&b| b == b'\n').map(<[u8]>::to_vec).collect();
         if self.first || cur != self.prev {
             let payload = frame_diff(&self.prev, &cur, self.first);
@@ -382,15 +455,27 @@ impl FrameSource {
     }
 }
 
+/// Decrements the live-stream count on drop, so the disconnect watchdog sees the browser leave no
+/// matter how `stream_loop` returns.
+struct StreamGuard;
+impl Drop for StreamGuard {
+    fn drop(&mut self) {
+        STREAMS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 fn stream_loop(stream: &mut TcpStream, matchspec: &str) -> Result<()> {
     write!(
         stream,
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
     )?;
+    STREAMS.fetch_add(1, Ordering::Relaxed);
+    SEEN_CLIENT.store(true, Ordering::Relaxed);
+    let _guard = StreamGuard;
     let mut src = FrameSource::new();
     loop {
         if SHUTDOWN.load(Ordering::Relaxed) {
-            // mirrored window gone → tell the page to close its own tab, then drop the connection
+            // session ending → tell the page to close its own tab, then drop the connection
             write!(stream, "event: end\r\ndata: bye\r\n\r\n")?;
             stream.flush()?;
             return Ok(());
@@ -401,6 +486,16 @@ fn stream_loop(stream: &mut TcpStream, matchspec: &str) -> Result<()> {
                 stream.flush()?;
             }
             None => {
+                // empty for a while → this pane's window may have been closed in the terminal;
+                // confirm it's truly gone and tell the page to drop just this pane (not the session)
+                if src.empty_streak >= 3 {
+                    let id = matchspec.strip_prefix("id:").unwrap_or("");
+                    if !id.is_empty() && window_exists(id) == Some(false) {
+                        write!(stream, "event: gone\r\ndata: {id}\r\n\r\n")?;
+                        stream.flush()?;
+                        return Ok(());
+                    }
+                }
                 stream.write_all(b": ping\r\n\r\n")?;
                 stream.flush()?;
             }
@@ -814,6 +909,7 @@ function makeLeaf(win){
   const es=new EventSource('/stream?w='+win);leaf.es=es;
   es.onmessage=e=>{term.write(Uint8Array.from(atob(e.data),c=>c.charCodeAt(0)));fit(leaf);};
   es.addEventListener('end',endSession);
+  es.addEventListener('gone',()=>dropLeaf(leaf,false)); // window closed in the terminal → drop pane
   new ResizeObserver(()=>fit(leaf)).observe(el);
   leaves.add(leaf);updateBar();
   return leaf;
@@ -842,28 +938,33 @@ function split(leaf,side){
   }).catch(()=>{bar.textContent='kittyweb · split failed';});
 }
 
-function closeLeaf(leaf){
-  fetch('/close?w='+leaf.win,{method:'POST'}).catch(()=>{});
+// remove a pane from the tree. tellKitty=true (× button) also closes the kitty window; false is for
+// a window that's already gone (closed in the terminal → server sent `event: gone`).
+function dropLeaf(leaf,tellKitty){
+  if(!leaves.has(leaf))return;     // already dropped (guards a close/gone race)
+  if(tellKitty)fetch('/close?w='+leaf.win,{method:'POST'}).catch(()=>{});
   if(leaf.es)leaf.es.close();
   leaves.delete(leaf);updateBar();
   const p=leaf.parent;
-  if(!p){endSession();return;}     // closed the last pane
+  if(!p){endSession();return;}     // dropped the last pane
   const sib=p.a===leaf?p.b:p.a;    // sibling is promoted into p's slot
   replaceNode(p,sib);
   if(active===leaf)setActive(firstLeaf(sib));
-  refitAll();                      // kitty reclaimed the closed pane's space — match the new grids
+  refitAll();                      // kitty reclaimed the space — match the new grids
 }
+function closeLeaf(leaf){dropLeaf(leaf,true);}
 function firstLeaf(n){while(n.kind!=='leaf')n=n.a;return n;}
 
 const seed=makeLeaf(SEED);root.appendChild(seed.el);setActive(seed);
 addEventListener('resize',()=>leaves.forEach(fit));
+addEventListener('pagehide',()=>{try{navigator.sendBeacon('/bye')}catch(_){}}); // browser gone → tear down
 </script>
 </body></html>"##;
 
 /// Spawn the mirror daemon detached (setsid → its own session, inherits this process's kitty
 /// socket env) for `window`, open the browser, return the URL. Called from the matou TUI, which is
 /// a real kitty window (so it has KITTY_LISTEN_ON); the daemon survives matou closing.
-pub fn start_detached(window: i64, port: u16, p2p: bool) -> String {
+pub fn start_detached(window: i64, port: u16, owned: bool) -> String {
     // Reclaim the port: a daemon from an earlier share may still be squatting it
     // (its window outlived the share, or it predates the watchdog). Without this the
     // new daemon fails to bind and the browser connects to the stale one — which is
@@ -880,8 +981,8 @@ pub fn start_detached(window: i64, port: u16, p2p: bool) -> String {
         "--port".into(),
         port.to_string(),
     ];
-    if p2p {
-        args.push("--p2p".into());
+    if owned {
+        args.push("--owned".into()); // a hidden-OS-window workspace the daemon tears down on exit
     }
     let _ = Command::new("setsid")
         .arg(&exe)

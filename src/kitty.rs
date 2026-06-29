@@ -205,3 +205,14 @@ pub fn new_tab_in(dir: &str) -> Option<i64> {
     capture(&["launch", "--type=tab", "--cwd", dir, "--keep-focus"]).parse().ok()
 }
 
+/// Open a shell in a brand-new OS window cwd'd to `dir`, **hide that OS window**, and return its
+/// window id. This is kittyweb's "new workspace": the panes live in a hidden OS window driven only
+/// from the browser, so there's no tab in kitty to see — or accidentally mess with.
+pub fn new_hidden_oswindow_in(dir: &str) -> Option<i64> {
+    let id: i64 = capture(&["launch", "--type=os-window", "--cwd", dir, "--keep-focus"]).parse().ok()?;
+    let _ = Command::new("kitty")
+        .args(["@", "resize-os-window", "--action", "hide", "--match", &format!("id:{id}")])
+        .status();
+    Some(id)
+}
+
