@@ -718,55 +718,8 @@ pub fn start_detached(window: i64, port: u16, p2p: bool) -> String {
         .stderr(Stdio::null())
         .spawn();
     let url = format!("http://127.0.0.1:{port}");
-    open_browser(&url);
+    // Open in a normal tab via the user's default browser. A normal tab can't self-close, so on
+    // exit the page falls back to an "ended" notice rather than disappearing.
+    let _ = Command::new("kitty").args(["@", "launch", "--type=background", "xdg-open", &url]).status();
     url
-}
-
-/// Open the mirror page, detached from matou (via kitty's background launch so it outlives the
-/// overlay). Prefer a chromium-family browser in `--app` mode: that window is frameless and, unlike
-/// an ordinary tab, the page is allowed to `window.close()` itself when the mirror ends. Otherwise
-/// fall back to the user's default browser via `xdg-open` (the page then shows an "ended" notice it
-/// can't auto-close).
-fn open_browser(url: &str) {
-    let mut launch: Vec<String> =
-        ["@", "launch", "--type=background"].iter().map(|s| s.to_string()).collect();
-    match chromium_app_browser() {
-        Some(bin) => {
-            launch.push(bin);
-            launch.push(format!("--app={url}"));
-        }
-        None => {
-            launch.push("xdg-open".into());
-            launch.push(url.to_string());
-        }
-    }
-    let _ = Command::new("kitty").args(&launch).status();
-}
-
-/// The default browser's binary iff it's chromium-family (Chrome/Chromium/Brave/Edge/Vivaldi) and
-/// on PATH — those support `--app=` app windows a page can close itself. `None` ⇒ use `xdg-open`,
-/// so a non-chromium default (e.g. Firefox) is still honoured rather than hijacked.
-fn chromium_app_browser() -> Option<String> {
-    let out = Command::new("xdg-settings").args(["get", "default-web-browser"]).output().ok()?;
-    let id = String::from_utf8_lossy(&out.stdout).trim().to_lowercase();
-    let candidates: &[&str] = if id.contains("chrome") {
-        &["google-chrome-stable", "google-chrome", "chrome"]
-    } else if id.contains("chromium") {
-        &["chromium", "chromium-browser"]
-    } else if id.contains("brave") {
-        &["brave-browser", "brave"]
-    } else if id.contains("edge") {
-        &["microsoft-edge", "microsoft-edge-stable"]
-    } else if id.contains("vivaldi") {
-        &["vivaldi-stable", "vivaldi"]
-    } else {
-        return None;
-    };
-    candidates.iter().find(|b| in_path(b)).map(|b| (*b).to_string())
-}
-
-/// Is `bin` an executable on `$PATH`? (Cheap, no subprocess.)
-fn in_path(bin: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|d| d.join(bin).is_file()))
 }
