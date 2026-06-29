@@ -1,37 +1,34 @@
 # matou — task runner (https://github.com/casey/just). Run `just` for the default build.
 prefix := env_var_or_default("PREFIX", env_var("HOME") / ".local")
 
-# build the binary into the repo
+# build (release)
 build:
-    go build -o matou ./cmd/matou
+    cargo build --release
 
 # build + install to $PREFIX/bin (default ~/.local/bin)
 install:
-    go build -o {{ prefix }}/bin/matou ./cmd/matou
+    cargo build --release
+    install -Dm755 target/release/matou {{ prefix }}/bin/matou
 
-# build, then run with any extra args (e.g. `just run --once`)
-run *args: build
-    ./matou {{ args }}
+# build, then run with extra args (e.g. `just run -- --once`)
+run *args:
+    cargo run --release -- {{ args }}
 
-# format · vet · test — the pre-commit sweep
-check: fmt vet test
+# format · clippy · test — the pre-commit sweep
+check: fmt clippy test
 
 fmt:
-    gofmt -w .
+    cargo fmt
 
-vet:
-    go vet ./...
+clippy:
+    cargo clippy --all-targets
 
 test:
-    go test ./...
+    cargo test
 
-# update go.mod/go.sum
-tidy:
-    go mod tidy
-
-# build the static binary in Docker and export it to ./matou (needs BuildKit)
+# build the binary in Docker and export it to ./matou (needs BuildKit)
 docker:
     docker build --output . .
 
 clean:
-    rm -f matou
+    cargo clean

@@ -1,0 +1,24 @@
+# matou — kitty project launcher + tab mirror (Rust/ratatui rewrite of the Go original).
+# The legacy Go is preserved on the `go-legacy` branch / `go-legacy-v1` tag.
+[package]
+name = "matou"
+version = "0.2.0"
+edition = "2024"
+description = "A kitty terminal project launcher (palette + layouts) with a browser/P2P tab mirror."
+license = "MIT"
+
+[[bin]]
+name = "matou"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+# tab mirror (browser + P2P) — moved in from chatons
+base64 = "0.22"
+wtransport = { version = "0.6", features = ["self-signed"] }
+iroh = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }

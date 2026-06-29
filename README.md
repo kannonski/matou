@@ -2,7 +2,11 @@
 
 A **palette for [kitty](https://sw.kovidgoyal.net/kitty/)** — vim-navigated, one keystroke to
 jump to an open project tab, or open a directory in a chosen layout. A remote-control client
-(it shells out to `kitty @`), not a kitten, so it's a normal Go TUI.
+(it shells out to `kitty @`), not a kitten — a Rust/[ratatui](https://ratatui.rs) TUI.
+
+It also carries a **tab mirror**: `matou mirror --window <id>` streams a kitty tab to a local
+browser (view + control, over WebTransport with an SSE fallback), and `matou mirror-open <ticket>`
+dials a tab peer-to-peer via [iroh](https://iroh.computer) (QUIC + NAT traversal).
 
 ## Demo
 
