@@ -65,27 +65,26 @@ fn act_on(m: &mut Model) -> bool {
     false
 }
 
-/// Share the current selection into kittyweb. An already-open tab is mirrored in place (you keep
-/// using it in the terminal too) — `owned = false`. A project (not open yet) opens in a **hidden
-/// OS window** the daemon owns and tears down on exit — `owned = true` — so the workspace never
-/// shows up as a kitty tab. Returns true if the app should quit.
+/// Share the current selection into kittyweb. An already-open tab is mirrored straight away; a
+/// project (not open yet) gets a fresh tab in its directory, which is then mirrored — you compose
+/// any extra panes in the browser. Returns true if the app should quit.
 fn share_on(m: &mut Model) -> bool {
     let (kind, win_id, dir) = match m.sel() {
         Some(it) => (it.kind.clone(), it.win_id, it.dir.clone()),
         None => return false,
     };
-    let (window, owned) = if kind == "open" {
-        (win_id, false)
+    let window = if kind == "open" {
+        win_id
     } else {
-        match kitty::new_hidden_oswindow_in(&dir) {
-            Some(w) => (w, true),
+        match kitty::new_tab_in(&dir) {
+            Some(w) => w,
             None => {
-                m.status = "couldn't open a workspace".into();
+                m.status = "couldn't open a tab".into();
                 return false;
             }
         }
     };
-    crate::mirror::start_detached(window, 9123, owned);
+    crate::mirror::start_detached(window, 9123);
     true // matou quits; the daemon keeps serving and the browser opens kittyweb
 }
 

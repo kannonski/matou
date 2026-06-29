@@ -23,25 +23,21 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 // (cert hash as dotted-hex, quic port) — set once at startup if WebTransport comes up, then read
 // by page() to bootstrap the browser's serverCertificateHashes. Empty hash ⇒ SSE-only.
 static WT_INFO: OnceLock<(String, u16)> = OnceLock::new();
 
-// Set by the watchdog when the workspace is gone, so connected SSE clients get a clean `event: end`
-// (→ the page closes its own tab) before the process exits a moment later.
+// Set when the session is ending, so connected SSE clients get a clean `event: end` (→ the page
+// closes its own tab) before the process exits a moment later.
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
-// kittyweb workspace lifecycle. OWNED ⇒ the daemon launched a hidden OS window for this session
-// and must tear it down when the browser is gone. STREAMS counts live SSE panes and SEEN_CLIENT
-// flips once a browser has ever connected — together they detect the browser disconnecting.
-// WORKSPACE_TAB is the tab to close on an owned teardown (-1 until resolved).
-static OWNED: AtomicBool = AtomicBool::new(false);
+// Browser-presence tracking: STREAMS counts live SSE panes and SEEN_CLIENT flips once a browser has
+// ever connected — together they let the daemon exit once the browser is gone (no lingering daemon).
 static STREAMS: AtomicUsize = AtomicUsize::new(0);
 static SEEN_CLIENT: AtomicBool = AtomicBool::new(false);
-static WORKSPACE_TAB: AtomicI64 = AtomicI64::new(-1);
 
 /// matou's config dir (where the mirror keeps its pidfile + ticket).
 pub(crate) fn home() -> PathBuf {
@@ -86,41 +82,13 @@ fn stop(port: u16) -> Result<()> {
     Ok(())
 }
 
-/// End this mirror session and exit. An owned session (a hidden OS-window workspace) gets its
-/// windows closed first; either way connected pages get `event: end` before the process goes.
+/// End this mirror session and exit: signal connected pages (`event: end`), drop the pidfile, go.
+/// Leaves the user's windows alone — sharing just stops mirroring them.
 fn shutdown_now() -> ! {
-    if OWNED.load(Ordering::Relaxed) {
-        close_workspace();
-    }
     SHUTDOWN.store(true, Ordering::Relaxed);
     let _ = std::fs::remove_file(pidfile());
     std::thread::sleep(Duration::from_millis(300));
     std::process::exit(0);
-}
-
-/// Close every window in the owned workspace tab — the last one closing takes its hidden OS window
-/// with it, so a project workspace leaves nothing behind in kitty.
-fn close_workspace() {
-    let tab = WORKSPACE_TAB.load(Ordering::Relaxed);
-    if tab < 0 {
-        return;
-    }
-    let Ok(out) = Command::new("kitty").args(["@", "ls"]).output() else { return };
-    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else { return };
-    for ow in v.as_array().into_iter().flatten() {
-        for t in ow["tabs"].as_array().into_iter().flatten() {
-            if t["id"].as_i64() != Some(tab) {
-                continue;
-            }
-            for w in t["windows"].as_array().into_iter().flatten() {
-                if let Some(id) = w["id"].as_u64() {
-                    let _ = Command::new("kitty")
-                        .args(["@", "close-window", "--match", &format!("id:{id}")])
-                        .status();
-                }
-            }
-        }
-    }
 }
 
 pub fn run(args: &[String]) -> Result<()> {
@@ -129,13 +97,11 @@ pub fn run(args: &[String]) -> Result<()> {
     let mut bind = "127.0.0.1".to_string();
     let mut do_stop = false;
     let mut p2p = false;
-    let mut owned = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--stop" => do_stop = true,
             "--p2p" => p2p = true,
-            "--owned" => owned = true,
             "--window" | "-w" => {
                 window = args.get(i + 1).cloned();
                 i += 1;
@@ -161,7 +127,6 @@ pub fn run(args: &[String]) -> Result<()> {
     }
     let window = window.context("usage: chatons mirror --window <id> [--port <p>] [--bind <addr>]")?;
     let matchspec = format!("id:{window}");
-    OWNED.store(owned, Ordering::Relaxed);
 
     // bind, retrying briefly so a just-killed predecessor has time to release the port
     let mut listener = None;
@@ -214,16 +179,12 @@ pub fn run(args: &[String]) -> Result<()> {
     {
         let win = window.clone();
         let tab_id = tab_of_window(&window);
-        if let Some(t) = tab_id {
-            WORKSPACE_TAB.store(t, Ordering::Relaxed);
-        }
         std::thread::spawn(move || {
             let mut misses = 0;
             let mut gone = 0;
             loop {
                 std::thread::sleep(Duration::from_secs(2));
-                // browser gone (every pane's SSE dropped after one ever connected) → tear down:
-                // an owned workspace gets its hidden windows closed, otherwise we just stop serving.
+                // browser gone (every pane's SSE dropped after one ever connected) → stop serving
                 if SEEN_CLIENT.load(Ordering::Relaxed) && STREAMS.load(Ordering::Relaxed) == 0 {
                     gone += 1;
                     if gone >= 3 {
@@ -366,17 +327,14 @@ fn query_param(query: &str, key: &str) -> Option<String> {
 }
 
 /// Split window `w` (`right` → vsplit, else `down`/hsplit) and return the new window's id. The new
-/// pane inherits `w`'s cwd. `--next-to` only honours a target in the *active* tab, so for an
-/// in-place (not owned) workspace focus `w` first — otherwise the split lands in whatever tab the
-/// user last touched. An owned workspace is the sole tab of its hidden OS window (so `--next-to`
-/// already resolves there) and focusing it would un-hide it, so we skip the focus.
+/// pane inherits `w`'s cwd. `--next-to` only honours a target in the *active* tab, so focus `w`
+/// first — otherwise the split lands in whatever tab the user last touched. `--keep-focus` then
+/// leaves focus on `w` (the new pane is grafted in beside it).
 fn split_window(w: &str, side: &str) -> Option<i64> {
     let loc = if side == "down" { "hsplit" } else { "vsplit" };
-    if !OWNED.load(Ordering::Relaxed) {
-        let _ = Command::new("kitty")
-            .args(["@", "focus-window", "--match", &format!("id:{w}")])
-            .status();
-    }
+    let _ = Command::new("kitty")
+        .args(["@", "focus-window", "--match", &format!("id:{w}")])
+        .status();
     let mut args = vec![
         "@".to_string(),
         "launch".into(),
@@ -964,7 +922,7 @@ addEventListener('pagehide',()=>{try{navigator.sendBeacon('/bye')}catch(_){}}); 
 /// Spawn the mirror daemon detached (setsid → its own session, inherits this process's kitty
 /// socket env) for `window`, open the browser, return the URL. Called from the matou TUI, which is
 /// a real kitty window (so it has KITTY_LISTEN_ON); the daemon survives matou closing.
-pub fn start_detached(window: i64, port: u16, owned: bool) -> String {
+pub fn start_detached(window: i64, port: u16) -> String {
     // Reclaim the port: a daemon from an earlier share may still be squatting it
     // (its window outlived the share, or it predates the watchdog). Without this the
     // new daemon fails to bind and the browser connects to the stale one — which is
@@ -974,16 +932,13 @@ pub fn start_detached(window: i64, port: u16, owned: bool) -> String {
     let exe = std::env::current_exe()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "matou".into());
-    let mut args = vec![
+    let args = [
         "mirror".to_string(),
         "--window".into(),
         window.to_string(),
         "--port".into(),
         port.to_string(),
     ];
-    if owned {
-        args.push("--owned".into()); // a hidden-OS-window workspace the daemon tears down on exit
-    }
     let _ = Command::new("setsid")
         .arg(&exe)
         .args(&args)
