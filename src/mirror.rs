@@ -23,11 +23,16 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 // (cert hash as dotted-hex, quic port) — set once at startup if WebTransport comes up, then read
 // by page() to bootstrap the browser's serverCertificateHashes. Empty hash ⇒ SSE-only.
 static WT_INFO: OnceLock<(String, u16)> = OnceLock::new();
+
+// Set by the watchdog when the mirrored window is gone, so connected SSE clients get a clean
+// `event: end` (→ the page closes its own tab) before the process exits a moment later.
+static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
 /// matou's config dir (where the mirror keeps its pidfile + ticket).
 pub(crate) fn home() -> PathBuf {
@@ -165,7 +170,11 @@ pub fn run(args: &[String]) -> Result<()> {
                     Some(false) => {
                         misses += 1;
                         if misses >= 2 {
+                            // Tell connected pages to close themselves, give the SSE loops one
+                            // poll cycle to emit `event: end`, then go.
+                            SHUTDOWN.store(true, Ordering::Relaxed);
                             let _ = std::fs::remove_file(pidfile());
+                            std::thread::sleep(Duration::from_millis(400));
                             std::process::exit(0);
                         }
                     }
@@ -299,6 +308,12 @@ fn stream_loop(stream: &mut TcpStream, matchspec: &str) -> Result<()> {
     )?;
     let mut src = FrameSource::new();
     loop {
+        if SHUTDOWN.load(Ordering::Relaxed) {
+            // mirrored window gone → tell the page to close its own tab, then drop the connection
+            write!(stream, "event: end\r\ndata: bye\r\n\r\n")?;
+            stream.flush()?;
+            return Ok(());
+        }
         match src.poll(matchspec) {
             Some(payload) => {
                 write!(stream, "data: {}\r\n\r\n", STANDARD.encode(&payload))?;
@@ -625,16 +640,31 @@ const PAGE: &str = r##"<!doctype html>
  // input goes through an indirection so the active transport can swap it
  let sendInput=d=>fetch('/key',{method:'POST',body:d});
  term.onData(d=>sendInput(d));
+ // the mirrored tab ended: close our own tab (works for the chrome --app window matou opens;
+ // an ordinary tab can't self-close, so fall back to a clear notice).
+ let es=null,ended=false;
+ function endSession(){
+   if(ended)return;ended=true;
+   try{es&&es.close()}catch(_){}
+   bar.textContent='chatons mirror · ended';
+   window.close();
+   setTimeout(()=>{document.title='mirror ended';
+     document.body.innerHTML='<div style="position:absolute;inset:0;display:flex;'+
+       'align-items:center;justify-content:center;color:#888;'+
+       'font:14px monospace">mirror ended — you can close this tab</div>';},120);
+ }
  function startSSE(){
-   const es=new EventSource('/stream');
+   es=new EventSource('/stream');
    es.onmessage=e=>{term.write(Uint8Array.from(atob(e.data),c=>c.charCodeAt(0)));fit();};
-   es.onerror=()=>{bar.textContent='chatons mirror · disconnected'};
+   es.addEventListener('end',endSession);
+   es.onerror=()=>{if(!ended)bar.textContent='chatons mirror · disconnected'};
  }
  async function startWT(){
    const hash=Uint8Array.from("__WT_HASH__".split(':').map(h=>parseInt(h,16)));
    const wt=new WebTransport('https://'+location.hostname+':'+__WT_PORT__+'/mirror',
      {serverCertificateHashes:[{algorithm:'sha-256',value:hash}]});
    await wt.ready;
+   wt.closed.then(endSession,endSession); // session dropped (daemon gone) → close our tab
    bar.textContent='chatons mirror · live · quic';
    const w=(await wt.createUnidirectionalStream()).getWriter();
    sendInput=d=>{const b=new TextEncoder().encode(d);const h=new Uint8Array(4);
@@ -688,6 +718,55 @@ pub fn start_detached(window: i64, port: u16, p2p: bool) -> String {
         .stderr(Stdio::null())
         .spawn();
     let url = format!("http://127.0.0.1:{port}");
-    let _ = Command::new("kitty").args(["@", "launch", "--type=background", "xdg-open", &url]).status();
+    open_browser(&url);
     url
+}
+
+/// Open the mirror page, detached from matou (via kitty's background launch so it outlives the
+/// overlay). Prefer a chromium-family browser in `--app` mode: that window is frameless and, unlike
+/// an ordinary tab, the page is allowed to `window.close()` itself when the mirror ends. Otherwise
+/// fall back to the user's default browser via `xdg-open` (the page then shows an "ended" notice it
+/// can't auto-close).
+fn open_browser(url: &str) {
+    let mut launch: Vec<String> =
+        ["@", "launch", "--type=background"].iter().map(|s| s.to_string()).collect();
+    match chromium_app_browser() {
+        Some(bin) => {
+            launch.push(bin);
+            launch.push(format!("--app={url}"));
+        }
+        None => {
+            launch.push("xdg-open".into());
+            launch.push(url.to_string());
+        }
+    }
+    let _ = Command::new("kitty").args(&launch).status();
+}
+
+/// The default browser's binary iff it's chromium-family (Chrome/Chromium/Brave/Edge/Vivaldi) and
+/// on PATH — those support `--app=` app windows a page can close itself. `None` ⇒ use `xdg-open`,
+/// so a non-chromium default (e.g. Firefox) is still honoured rather than hijacked.
+fn chromium_app_browser() -> Option<String> {
+    let out = Command::new("xdg-settings").args(["get", "default-web-browser"]).output().ok()?;
+    let id = String::from_utf8_lossy(&out.stdout).trim().to_lowercase();
+    let candidates: &[&str] = if id.contains("chrome") {
+        &["google-chrome-stable", "google-chrome", "chrome"]
+    } else if id.contains("chromium") {
+        &["chromium", "chromium-browser"]
+    } else if id.contains("brave") {
+        &["brave-browser", "brave"]
+    } else if id.contains("edge") {
+        &["microsoft-edge", "microsoft-edge-stable"]
+    } else if id.contains("vivaldi") {
+        &["vivaldi-stable", "vivaldi"]
+    } else {
+        return None;
+    };
+    candidates.iter().find(|b| in_path(b)).map(|b| (*b).to_string())
+}
+
+/// Is `bin` an executable on `$PATH`? (Cheap, no subprocess.)
+fn in_path(bin: &str) -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|d| d.join(bin).is_file()))
 }
