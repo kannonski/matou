@@ -661,6 +661,12 @@ const PAGE: &str = r##"<!doctype html>
 /// socket env) for `window`, open the browser, return the URL. Called from the matou TUI, which is
 /// a real kitty window (so it has KITTY_LISTEN_ON); the daemon survives matou closing.
 pub fn start_detached(window: i64, port: u16, p2p: bool) -> String {
+    // Reclaim the port: a daemon from an earlier share may still be squatting it
+    // (its window outlived the share, or it predates the watchdog). Without this the
+    // new daemon fails to bind and the browser connects to the stale one — which is
+    // mirroring a dead window, so it serves no frames (the black-screen bug). The new
+    // daemon's own bind-retry covers the brief gap while the old one releases.
+    let _ = kill_port(port);
     let exe = std::env::current_exe()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "matou".into());

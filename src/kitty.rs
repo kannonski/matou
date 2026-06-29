@@ -199,12 +199,20 @@ pub fn open_tabs() -> anyhow::Result<(Vec<OpenTab>, HashSet<String>)> {
     Ok((tabs, cwds))
 }
 
-/// The window behind the matou overlay (most-recently-focused non-matou window in the focused
-/// OS window's active tab) — the tab "mirror this tab" targets.
+/// The window behind the matou overlay — what "mirror this tab" targets.
+///
+/// The overlay always lives in the *same tab* as the window it covers, so we locate our own
+/// tab (the one containing `self_id`) and pick its most-recently-focused non-matou window.
+/// This is deliberately independent of the `is_focused`/`is_active` flags: a `kitty @ launch`
+/// overlay doesn't always leave those set the way interactive focus does, and relying on them
+/// resolved to an unrelated window (the black-screen-on-share bug).
 pub fn source_window(tree: &[OsWindow], self_id: i64) -> Option<i64> {
-    let mut best: Option<(f64, i64)> = None;
-    for ow in tree.iter().filter(|w| w.is_focused) {
-        for t in ow.tabs.iter().filter(|t| t.is_active) {
+    for ow in tree {
+        for t in &ow.tabs {
+            if !t.windows.iter().any(|w| w.id == self_id) {
+                continue; // not our tab
+            }
+            let mut best: Option<(f64, i64)> = None;
             for w in &t.windows {
                 if w.id == self_id || w.user_vars.get("matou").map(String::as_str) == Some("1") {
                     continue;
@@ -213,12 +221,69 @@ pub fn source_window(tree: &[OsWindow], self_id: i64) -> Option<i64> {
                     best = Some((w.last_focused_at, w.id));
                 }
             }
+            if let Some((_, id)) = best {
+                return Some(id);
+            }
         }
     }
-    best.map(|(_, id)| id)
+    None
 }
 
 /// Open a fresh background tab (a shell) and return its window id — for "new stream tab".
 pub fn new_tab() -> Option<i64> {
     capture(&["launch", "--type=tab", "--cwd=current", "--keep-focus"]).parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn win(id: i64, focused_at: f64, matou: bool) -> Win {
+        let mut w = Win { id, last_focused_at: focused_at, ..Default::default() };
+        if matou {
+            w.user_vars.insert("matou".into(), "1".into());
+        }
+        w
+    }
+    fn tab(id: i64, active: bool, windows: Vec<Win>) -> Tab {
+        Tab { id, is_active: active, windows, ..Default::default() }
+    }
+
+    // The overlay (self) and the source share a tab; we resolve the source by *that* membership,
+    // not by focus flags. Here the active/focused flags all point at a different tab on purpose.
+    #[test]
+    fn source_window_resolves_by_overlay_tab_not_focus_flags() {
+        let tree = vec![OsWindow {
+            is_focused: false, // no OS window flagged focused — the flag-based logic would miss
+            tabs: vec![
+                tab(1, true, vec![win(3, 100.0, false)]), // "active" tab, but matou isn't here
+                tab(2, false, vec![win(20, 50.0, true), win(19, 40.0, false)]), // matou(20) + source(19)
+            ],
+        }];
+        assert_eq!(source_window(&tree, 20), Some(19));
+    }
+
+    // Among several siblings, pick the most-recently-focused non-matou window.
+    #[test]
+    fn source_window_picks_most_recent_sibling() {
+        let tree = vec![OsWindow {
+            is_focused: true,
+            tabs: vec![tab(
+                1,
+                true,
+                vec![win(20, 10.0, true), win(7, 30.0, false), win(8, 90.0, false)],
+            )],
+        }];
+        assert_eq!(source_window(&tree, 20), Some(8));
+    }
+
+    // matou alone in its tab → nothing to mirror.
+    #[test]
+    fn source_window_none_when_overlay_is_alone() {
+        let tree = vec![OsWindow {
+            is_focused: true,
+            tabs: vec![tab(1, true, vec![win(20, 10.0, true)])],
+        }];
+        assert_eq!(source_window(&tree, 20), None);
+    }
 }
