@@ -153,6 +153,28 @@ pub fn run(args: &[String]) -> Result<()> {
         std::thread::spawn(move || crate::mirror_p2p::serve(ms));
     }
 
+    // watchdog: the daemon is detached, so exit on its own once the mirrored window is gone —
+    // otherwise closing that tab leaves an orphaned daemon (the "zombie") serving a dead window.
+    {
+        let win = window.clone();
+        std::thread::spawn(move || {
+            let mut misses = 0;
+            loop {
+                std::thread::sleep(Duration::from_secs(2));
+                match window_exists(&win) {
+                    Some(false) => {
+                        misses += 1;
+                        if misses >= 2 {
+                            let _ = std::fs::remove_file(pidfile());
+                            std::process::exit(0);
+                        }
+                    }
+                    _ => misses = 0, // exists, or a transient `kitty @ ls` failure → don't exit
+                }
+            }
+        });
+    }
+
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
         let m = matchspec.clone();
@@ -452,6 +474,24 @@ fn send_keys_spawn(matchspec: &str, bytes: &[u8]) {
         }
         let _ = child.wait();
     }
+}
+
+/// Whether window `id` still exists: Some(true/false) if `kitty @ ls` succeeded, None on a
+/// transient failure (so the watchdog won't kill the daemon on a hiccup).
+fn window_exists(id: &str) -> Option<bool> {
+    let out = Command::new("kitty").args(["@", "ls"]).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    let found = v.as_array().into_iter().flatten().any(|ow| {
+        ow["tabs"].as_array().into_iter().flatten().any(|t| {
+            t["windows"].as_array().into_iter().flatten().any(|w| {
+                w["id"].as_u64().map(|x| x.to_string()).as_deref() == Some(id)
+            })
+        })
+    });
+    Some(found)
 }
 
 /// The source window's grid size (so xterm matches it). Page-load only, so a spawn is fine.
