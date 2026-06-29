@@ -616,3 +616,32 @@ const PAGE: &str = r##"<!doctype html>
  addEventListener('resize',fit);
 </script>
 </body></html>"##;
+
+/// Spawn the mirror daemon detached (setsid → its own session, inherits this process's kitty
+/// socket env) for `window`, open the browser, return the URL. Called from the matou TUI, which is
+/// a real kitty window (so it has KITTY_LISTEN_ON); the daemon survives matou closing.
+pub fn start_detached(window: i64, port: u16, p2p: bool) -> String {
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "matou".into());
+    let mut args = vec![
+        "mirror".to_string(),
+        "--window".into(),
+        window.to_string(),
+        "--port".into(),
+        port.to_string(),
+    ];
+    if p2p {
+        args.push("--p2p".into());
+    }
+    let _ = Command::new("setsid")
+        .arg(&exe)
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    let url = format!("http://127.0.0.1:{port}");
+    let _ = Command::new("kitty").args(["@", "launch", "--type=background", "xdg-open", &url]).status();
+    url
+}

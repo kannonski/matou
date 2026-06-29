@@ -198,3 +198,27 @@ pub fn open_tabs() -> anyhow::Result<(Vec<OpenTab>, HashSet<String>)> {
     tabs.sort_by(|x, y| y.focused_at.partial_cmp(&x.focused_at).unwrap_or(std::cmp::Ordering::Equal));
     Ok((tabs, cwds))
 }
+
+/// The window behind the matou overlay (most-recently-focused non-matou window in the focused
+/// OS window's active tab) — the tab "mirror this tab" targets.
+pub fn source_window(tree: &[OsWindow], self_id: i64) -> Option<i64> {
+    let mut best: Option<(f64, i64)> = None;
+    for ow in tree.iter().filter(|w| w.is_focused) {
+        for t in ow.tabs.iter().filter(|t| t.is_active) {
+            for w in &t.windows {
+                if w.id == self_id || w.user_vars.get("matou").map(String::as_str) == Some("1") {
+                    continue;
+                }
+                if best.is_none_or(|(b, _)| w.last_focused_at > b) {
+                    best = Some((w.last_focused_at, w.id));
+                }
+            }
+        }
+    }
+    best.map(|(_, id)| id)
+}
+
+/// Open a fresh background tab (a shell) and return its window id — for "new stream tab".
+pub fn new_tab() -> Option<i64> {
+    capture(&["launch", "--type=tab", "--cwd=current", "--keep-focus"]).parse().ok()
+}

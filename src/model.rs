@@ -31,6 +31,12 @@ impl Item {
 /// With no query, cap the project long-tail to the most-recent handful (open tabs always show).
 pub const TOP_PROJECTS: usize = 10;
 
+/// The `s` (share/stream) menu: mirror the current tab, or spin up a fresh tab to stream.
+pub const MIRROR_ITEMS: [(&str, &str); 2] = [
+    ("mirror this tab", "stream the tab behind matou to a browser"),
+    ("new stream tab", "spin up a fresh tab and stream it"),
+];
+
 #[derive(Default)]
 pub struct Model {
     pub all: Vec<Item>,
@@ -42,6 +48,8 @@ pub struct Model {
     pub layouts: Vec<palette::Layout>,
     pub lay_cur: usize,
     pub lay_dir: String,
+
+    pub mir_cur: usize, // cursor in the mirror/stream menu
 
     pub rtab: i64,
     pub rinput: String,

@@ -35,6 +35,7 @@ pub fn update(m: &mut Model, msg: Msg, tx: &Sender<Msg>) -> bool {
                 "filter" => update_filter(m, k),
                 "layout" => update_layout(m, k),
                 "move" => update_move(m, k),
+                "mirror" => update_mirror(m, k),
                 "agent" => update_agent(m, k, tx),
                 "rename" => update_rename(m, k),
                 _ => update_nav(m, k),
@@ -110,9 +111,55 @@ fn update_nav(m: &mut Model, k: KeyEvent) -> bool {
         }
         (Char('x'), false) => close_selected(m),
         (Char('r'), false) => start_rename(m),
+        (Char('s'), false) => {
+            m.mode = "mirror".into();
+            m.mir_cur = 0;
+        }
         _ => {}
     }
     true
+}
+
+/// Mirror/stream menu: pick "mirror this tab" or "new stream tab", ↵ starts it (and matou quits;
+/// the daemon keeps serving + the browser opens), esc/h back.
+fn update_mirror(m: &mut Model, k: KeyEvent) -> bool {
+    let c = ctrl(&k);
+    match (k.code, c) {
+        (Char('q'), _) | (Char('c'), true) => return false,
+        (Esc, _) | (Char('h'), false) => m.mode = String::new(),
+        (Char('j'), false) | (Down, _) | (Char('n'), true) => {
+            m.mir_cur = (m.mir_cur + 1).min(model::MIRROR_ITEMS.len() - 1)
+        }
+        (Char('k'), false) | (Up, _) | (Char('p'), true) => m.mir_cur = m.mir_cur.saturating_sub(1),
+        (Enter, _) | (Char('l'), false) => return do_mirror(m),
+        _ => {}
+    }
+    true
+}
+
+fn do_mirror(m: &mut Model) -> bool {
+    let window = if m.mir_cur == 0 {
+        let Ok(tree) = kitty::kitty_ls() else { return true };
+        match kitty::source_window(&tree, kitty::self_window_id()) {
+            Some(w) => w,
+            None => {
+                m.status = "no tab to mirror — try new stream tab".into();
+                m.mode = String::new();
+                return true;
+            }
+        }
+    } else {
+        match kitty::new_tab() {
+            Some(w) => w,
+            None => {
+                m.status = "couldn't open a tab".into();
+                m.mode = String::new();
+                return true;
+            }
+        }
+    };
+    crate::mirror::start_detached(window, 9123, false);
+    false // matou quits; the daemon keeps serving and the browser opens
 }
 
 fn update_filter(m: &mut Model, k: KeyEvent) -> bool {
