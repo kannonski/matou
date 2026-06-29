@@ -42,7 +42,6 @@ pub struct Model {
     pub layouts: Vec<palette::Layout>,
     pub lay_cur: usize,
     pub lay_dir: String,
-    pub lay_share: bool, // layout picker was opened by `s` → mirror the new tab once built
 
     pub rtab: i64,
     pub rinput: String,

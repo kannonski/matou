@@ -158,15 +158,22 @@ pub fn run(args: &[String]) -> Result<()> {
         std::thread::spawn(move || crate::mirror_p2p::serve(ms));
     }
 
-    // watchdog: the daemon is detached, so exit on its own once the mirrored window is gone —
-    // otherwise closing that tab leaves an orphaned daemon (the "zombie") serving a dead window.
+    // watchdog: the daemon is detached, so exit on its own once the workspace is gone — otherwise
+    // closing the tab leaves an orphaned daemon (the "zombie"). kittyweb panes are all windows in
+    // the seed's tab, so track the *tab*: the session lives as long as any pane remains, and ends
+    // only when the tab is empty/closed (falls back to the seed window if the tab can't resolve).
     {
         let win = window.clone();
+        let tab_id = tab_of_window(&window);
         std::thread::spawn(move || {
             let mut misses = 0;
             loop {
                 std::thread::sleep(Duration::from_secs(2));
-                match window_exists(&win) {
+                let alive = match tab_id {
+                    Some(t) => tab_alive(t),
+                    None => window_exists(&win),
+                };
+                match alive {
                     Some(false) => {
                         misses += 1;
                         if misses >= 2 {
@@ -178,7 +185,7 @@ pub fn run(args: &[String]) -> Result<()> {
                             std::process::exit(0);
                         }
                     }
-                    _ => misses = 0, // exists, or a transient `kitty @ ls` failure → don't exit
+                    _ => misses = 0, // alive, or a transient `kitty @ ls` failure → don't exit
                 }
             }
         });
@@ -203,7 +210,7 @@ fn respond(stream: &mut TcpStream, status: &str, ctype: &str, body: &[u8]) -> st
     stream.write_all(body)
 }
 
-fn handle(mut stream: TcpStream, matchspec: &str) -> Result<()> {
+fn handle(mut stream: TcpStream, seed: &str) -> Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut request_line = String::new();
     if reader.read_line(&mut request_line)? == 0 {
@@ -211,7 +218,8 @@ fn handle(mut stream: TcpStream, matchspec: &str) -> Result<()> {
     }
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("");
-    let path = parts.next().unwrap_or("");
+    let target = parts.next().unwrap_or("");
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
 
     let mut content_length = 0usize;
     loop {
@@ -228,8 +236,14 @@ fn handle(mut stream: TcpStream, matchspec: &str) -> Result<()> {
         }
     }
 
+    // Every per-pane endpoint takes `?w=<id>`; absent it, default to the seed window the daemon
+    // launched with. Each browser pane is a real kitty window addressed this way.
+    let seed_id = seed.strip_prefix("id:").unwrap_or(seed);
+    let win = query_param(query, "w");
+    let matchspec = win.as_deref().map(|w| format!("id:{w}")).unwrap_or_else(|| seed.to_string());
+
     match (method, path) {
-        ("GET", "/") => respond(&mut stream, "200 OK", "text/html; charset=utf-8", page().as_bytes())?,
+        ("GET", "/") => respond(&mut stream, "200 OK", "text/html; charset=utf-8", page(seed_id).as_bytes())?,
         ("GET", "/xterm.js") => respond(
             &mut stream,
             "200 OK",
@@ -243,19 +257,86 @@ fn handle(mut stream: TcpStream, matchspec: &str) -> Result<()> {
             include_str!("vendor/xterm.css").as_bytes(),
         )?,
         ("GET", "/size") => {
-            let (c, r) = window_size(matchspec);
+            let (c, r) = window_size(&matchspec);
             respond(&mut stream, "200 OK", "application/json", format!("{{\"cols\":{c},\"rows\":{r}}}").as_bytes())?;
         }
-        ("GET", "/stream") => stream_loop(&mut stream, matchspec)?,
+        ("GET", "/stream") => stream_loop(&mut stream, &matchspec)?,
         ("POST", "/key") => {
             let mut body = vec![0u8; content_length];
             reader.read_exact(&mut body)?;
-            send_input(matchspec, &body);
+            send_input(&matchspec, &body);
+            write!(stream, "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")?;
+        }
+        ("POST", "/split") => {
+            // grow the workspace: split the given window and report the new window's id
+            let side = query_param(query, "side").unwrap_or_default();
+            let from = win.clone().unwrap_or_else(|| seed_id.to_string());
+            let body = match split_window(&from, &side) {
+                Some(id) => format!("{{\"w\":{id}}}"),
+                None => "{\"w\":null}".to_string(),
+            };
+            respond(&mut stream, "200 OK", "application/json", body.as_bytes())?;
+        }
+        ("POST", "/close") => {
+            if let Some(w) = &win {
+                let _ = Command::new("kitty")
+                    .args(["@", "close-window", "--match", &format!("id:{w}")])
+                    .status();
+            }
             write!(stream, "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")?;
         }
         _ => write!(stream, "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n")?,
     }
     Ok(())
+}
+
+/// First `key=value` for `key` in a `&`-joined query string.
+fn query_param(query: &str, key: &str) -> Option<String> {
+    query.split('&').find_map(|kv| {
+        let (k, v) = kv.split_once('=')?;
+        (k == key).then(|| v.to_string())
+    })
+}
+
+/// Split window `w` (`right` → vsplit, else `down`/hsplit) and return the new window's id. The new
+/// pane inherits `w`'s cwd. `--next-to` only honours a target that's in the *active* tab, so focus
+/// `w` first — otherwise a split lands in whatever tab the user last touched. `--keep-focus` then
+/// leaves focus on `w` (the new pane is grafted in beside it).
+fn split_window(w: &str, side: &str) -> Option<i64> {
+    let loc = if side == "down" { "hsplit" } else { "vsplit" };
+    let _ = Command::new("kitty")
+        .args(["@", "focus-window", "--match", &format!("id:{w}")])
+        .status();
+    let mut args = vec![
+        "@".to_string(),
+        "launch".into(),
+        format!("--location={loc}"),
+        "--next-to".into(),
+        format!("id:{w}"),
+        "--keep-focus".into(),
+    ];
+    if let Some(cwd) = window_cwd(w) {
+        args.push("--cwd".into());
+        args.push(cwd);
+    }
+    let out = Command::new("kitty").args(&args).output().ok()?;
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
+/// Window `id`'s cwd from `kitty @ ls`, so a new split opens in the same directory.
+fn window_cwd(id: &str) -> Option<String> {
+    let out = Command::new("kitty").args(["@", "ls"]).output().ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    for ow in v.as_array().into_iter().flatten() {
+        for tab in ow["tabs"].as_array().into_iter().flatten() {
+            for w in tab["windows"].as_array().into_iter().flatten() {
+                if w["id"].as_u64().map(|x| x.to_string()).as_deref() == Some(id) {
+                    return w["cwd"].as_str().map(String::from);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// SSE: poll the screen over a persistent kitty socket, send only changed rows, poll fast while
@@ -491,6 +572,39 @@ fn send_keys_spawn(matchspec: &str, bytes: &[u8]) {
     }
 }
 
+/// The id of the tab containing window `id`, resolved once at startup so the watchdog can track the
+/// whole workspace (all kittyweb panes live in this tab) rather than the single seed window.
+fn tab_of_window(id: &str) -> Option<i64> {
+    let out = Command::new("kitty").args(["@", "ls"]).output().ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    for ow in v.as_array().into_iter().flatten() {
+        for tab in ow["tabs"].as_array().into_iter().flatten() {
+            for w in tab["windows"].as_array().into_iter().flatten() {
+                if w["id"].as_u64().map(|x| x.to_string()).as_deref() == Some(id) {
+                    return tab["id"].as_i64();
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Whether tab `tab_id` still holds at least one window. None on a transient `kitty @ ls` failure.
+fn tab_alive(tab_id: i64) -> Option<bool> {
+    let out = Command::new("kitty").args(["@", "ls"]).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    let alive = v.as_array().into_iter().flatten().any(|ow| {
+        ow["tabs"].as_array().into_iter().flatten().any(|t| {
+            t["id"].as_i64() == Some(tab_id)
+                && t["windows"].as_array().is_some_and(|w| !w.is_empty())
+        })
+    });
+    Some(alive)
+}
+
 /// Whether window `id` still exists: Some(true/false) if `kitty @ ls` succeeded, None on a
 /// transient failure (so the watchdog won't kill the daemon on a hiccup).
 fn window_exists(id: &str) -> Option<bool> {
@@ -602,88 +716,135 @@ fn font_family() -> String {
     }
 }
 
-fn page() -> String {
+fn page(seed: &str) -> String {
     let c = kitty_colors();
     let bg = c.get("background").cloned().unwrap_or_else(|| "#1e1e1e".into());
-    let (wt_hash, wt_port) = WT_INFO.get().cloned().unwrap_or_default(); // ("", 0) ⇒ SSE only
     PAGE.replace("__FONT__", &font_family())
         .replace("__THEME__", &theme_json(&c))
         .replace("__BG__", &bg)
-        .replace("__WT_HASH__", &wt_hash)
-        .replace("__WT_PORT__", &wt_port.to_string())
+        .replace("__SEED__", seed)
 }
 
-// Self-contained page (r##".."## so inner double-quotes are fine). xterm.js does the emulation;
-// we pipe frames in and keystrokes out, and scale the source-sized grid to fit the window.
+// kittyweb: a composable workspace. Each pane is a real kitty window (xterm.js fed by SSE, input
+// POSTed back). The browser owns the split tree — hovering a pane shows a `+` on its right edge
+// (vsplit) and bottom edge (hsplit); clicking launches a real kitty split and grafts the new pane
+// into the tree as nested flexboxes. No preset layouts — you build the layout by growing it.
 const PAGE: &str = r##"<!doctype html>
-<html><head><meta charset=utf-8><title>chatons mirror</title>
+<html><head><meta charset=utf-8><title>kittyweb</title>
 <link rel=stylesheet href=/xterm.css>
 <style>
- html,body{margin:0;height:100%;background:__BG__;overflow:hidden}
- #wrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
- #term{transform-origin:center center}
- #bar{position:fixed;bottom:0;right:0;font:11px monospace;color:#999;background:#000000aa;padding:3px 7px;z-index:10}
+ html,body{margin:0;height:100%;background:__BG__;overflow:hidden;font-family:monospace}
+ #root{position:absolute;inset:0;display:flex}
+ #root>*{flex:1 1 0;min-width:0;min-height:0}
+ .split{display:flex;flex:1 1 0;min-width:0;min-height:0;gap:2px}
+ .split.row{flex-direction:row}
+ .split.col{flex-direction:column}
+ .split>*{flex:1 1 0;min-width:0;min-height:0}
+ .pane{position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;
+   background:__BG__;box-shadow:inset 0 0 0 1px #2a2a3a}
+ .pane.act{box-shadow:inset 0 0 0 1px #8aadf4}
+ .pane .term{transform-origin:center center}
  .xterm,.xterm-viewport{background:__BG__ !important}
+ .add,.cls{position:absolute;z-index:5;opacity:0;transition:opacity .1s;cursor:pointer;border:0;
+   color:#cdd6f4;background:#1e1e2ecc;font:14px monospace;line-height:1;
+   display:flex;align-items:center;justify-content:center}
+ .pane:hover .add,.pane:hover .cls{opacity:.55}
+ .add:hover,.cls:hover{opacity:1 !important;background:#8aadf4dd;color:#11111b}
+ .addR{top:0;bottom:0;right:0;width:15px}
+ .addD{left:0;right:0;bottom:0;height:15px}
+ .cls{top:0;right:15px;width:18px;height:15px;border-radius:0 0 0 4px}
+ #bar{position:fixed;bottom:0;right:0;font:11px monospace;color:#999;background:#000a;
+   padding:3px 7px;z-index:10}
 </style></head>
 <body>
-<div id=wrap><div id=term></div></div>
-<div id=bar>chatons mirror · live</div>
+<div id=root></div>
+<div id=bar>kittyweb · live</div>
 <script src=/xterm.js></script>
 <script>
- const bar=document.getElementById('bar'),host=document.getElementById('term');
- const term=new Terminal({fontFamily:"__FONT__",fontSize:14,cursorBlink:false,scrollback:0,
-   theme:__THEME__});
- term.open(host);
- function fit(){const w=host.offsetWidth,h=host.offsetHeight;if(!w||!h)return;
-   host.style.transform='scale('+Math.min(innerWidth/w,innerHeight/h)+')';}
- fetch('/size').then(r=>r.json()).then(s=>{term.resize(s.cols,s.rows);fit();}).catch(()=>{});
- // input goes through an indirection so the active transport can swap it
- let sendInput=d=>fetch('/key',{method:'POST',body:d});
- term.onData(d=>sendInput(d));
- // the mirrored tab ended: close our own tab (works for the chrome --app window matou opens;
- // an ordinary tab can't self-close, so fall back to a clear notice).
- let es=null,ended=false;
- function endSession(){
-   if(ended)return;ended=true;
-   try{es&&es.close()}catch(_){}
-   bar.textContent='chatons mirror · ended';
-   window.close();
-   setTimeout(()=>{document.title='mirror ended';
-     document.body.innerHTML='<div style="position:absolute;inset:0;display:flex;'+
-       'align-items:center;justify-content:center;color:#888;'+
-       'font:14px monospace">mirror ended — you can close this tab</div>';},120);
- }
- function startSSE(){
-   es=new EventSource('/stream');
-   es.onmessage=e=>{term.write(Uint8Array.from(atob(e.data),c=>c.charCodeAt(0)));fit();};
-   es.addEventListener('end',endSession);
-   es.onerror=()=>{if(!ended)bar.textContent='chatons mirror · disconnected'};
- }
- async function startWT(){
-   const hash=Uint8Array.from("__WT_HASH__".split(':').map(h=>parseInt(h,16)));
-   const wt=new WebTransport('https://'+location.hostname+':'+__WT_PORT__+'/mirror',
-     {serverCertificateHashes:[{algorithm:'sha-256',value:hash}]});
-   await wt.ready;
-   wt.closed.then(endSession,endSession); // session dropped (daemon gone) → close our tab
-   bar.textContent='chatons mirror · live · quic';
-   const w=(await wt.createUnidirectionalStream()).getWriter();
-   sendInput=d=>{const b=new TextEncoder().encode(d);const h=new Uint8Array(4);
-     new DataView(h.buffer).setUint32(0,b.length);w.write(h);w.write(b);};
-   const reader=wt.incomingUnidirectionalStreams.getReader();
-   const fr=(await reader.read()).value.getReader();
-   let buf=new Uint8Array(0);
-   for(;;){const {value,done}=await fr.read();if(done)break;
-     const nb=new Uint8Array(buf.length+value.length);nb.set(buf);nb.set(value,buf.length);buf=nb;
-     for(;;){if(buf.length<4)break;
-       const n=new DataView(buf.buffer,buf.byteOffset,4).getUint32(0);
-       if(buf.length<4+n)break;
-       term.write(buf.slice(4,4+n));fit();buf=buf.subarray(4+n);}
-   }
- }
- if("__WT_HASH__"){startWT().catch(e=>{console.warn('WebTransport failed → SSE',e);
-   bar.textContent='chatons mirror · live · sse';startSSE();});}
- else{startSSE();}
- addEventListener('resize',fit);
+const THEME=__THEME__,FONT="__FONT__",SEED="__SEED__";
+const bar=document.getElementById('bar'),root=document.getElementById('root');
+const leaves=new Set();
+let active=null,ended=false;
+
+function endSession(){
+  if(ended)return;ended=true;
+  bar.textContent='kittyweb · ended';
+  window.close(); // works for a script-opened window; a normal tab can't self-close → notice below
+  setTimeout(()=>{document.title='kittyweb — ended';
+    document.body.innerHTML='<div style="position:absolute;inset:0;display:flex;'+
+      'align-items:center;justify-content:center;color:#888;font:14px monospace">'+
+      'session ended — you can close this tab</div>';},120);
+}
+function updateBar(){if(!ended)bar.textContent='kittyweb · '+leaves.size+' pane'+(leaves.size>1?'s':'');}
+
+// scale a pane's source-sized grid to fit its (flex-sized) box
+function fit(leaf){const el=leaf.el,h=leaf.host,nw=h.offsetWidth,nh=h.offsetHeight;
+  if(!nw||!nh||!el.clientWidth)return;
+  const s=Math.min((el.clientWidth-2)/nw,(el.clientHeight-2)/nh);
+  h.style.transform='scale('+(s>0?s:0.01)+')';}
+
+function btn(cls,txt,fn){const b=document.createElement('button');b.className=cls;b.textContent=txt;
+  b.onclick=e=>{e.stopPropagation();fn();};return b;}
+
+function setActive(leaf){if(active)active.el.classList.remove('act');
+  active=leaf;if(leaf){leaf.el.classList.add('act');leaf.term.focus();}}
+
+function makeLeaf(win){
+  const el=document.createElement('div');el.className='pane';
+  const host=document.createElement('div');host.className='term';el.appendChild(host);
+  const leaf={kind:'leaf',win,el,host,term:null,es:null,parent:null};
+  el.append(btn('add addR','+',()=>split(leaf,'right')),
+            btn('add addD','+',()=>split(leaf,'down')),
+            btn('cls','×',()=>closeLeaf(leaf)));
+  const term=new Terminal({fontFamily:FONT,fontSize:13,cursorBlink:false,scrollback:0,theme:THEME});
+  term.open(host);leaf.term=term;
+  el.addEventListener('mousedown',()=>setActive(leaf));
+  term.onData(d=>fetch('/key?w='+win,{method:'POST',body:d}));
+  fetch('/size?w='+win).then(r=>r.json()).then(s=>{term.resize(s.cols,s.rows);fit(leaf);}).catch(()=>{});
+  const es=new EventSource('/stream?w='+win);leaf.es=es;
+  es.onmessage=e=>{term.write(Uint8Array.from(atob(e.data),c=>c.charCodeAt(0)));fit(leaf);};
+  es.addEventListener('end',endSession);
+  new ResizeObserver(()=>fit(leaf)).observe(el);
+  leaves.add(leaf);updateBar();
+  return leaf;
+}
+
+// graft `newn` where `oldn` sits (root, or a child slot of its parent split)
+function replaceNode(oldn,newn){
+  const p=oldn.parent;newn.parent=p;
+  if(!p){root.replaceChild(newn.el,oldn.el);return;}
+  if(p.a===oldn)p.a=newn;else p.b=newn;
+  p.el.replaceChild(newn.el,oldn.el);
+}
+
+function split(leaf,side){
+  fetch('/split?w='+leaf.win+'&side='+side,{method:'POST'}).then(r=>r.json()).then(({w})=>{
+    if(!w){bar.textContent='kittyweb · split failed';return;}
+    const nl=makeLeaf(w);
+    const sp={kind:'split',dir:side==='down'?'col':'row',a:leaf,b:nl,
+      el:document.createElement('div'),parent:null};
+    sp.el.className='split '+sp.dir;
+    replaceNode(leaf,sp);          // sp takes leaf's place in the tree + DOM
+    leaf.parent=sp;nl.parent=sp;
+    sp.el.append(leaf.el,nl.el);   // then leaf + new pane live inside sp
+    setActive(nl);
+  }).catch(()=>{bar.textContent='kittyweb · split failed';});
+}
+
+function closeLeaf(leaf){
+  fetch('/close?w='+leaf.win,{method:'POST'}).catch(()=>{});
+  if(leaf.es)leaf.es.close();
+  leaves.delete(leaf);updateBar();
+  const p=leaf.parent;
+  if(!p){endSession();return;}     // closed the last pane
+  const sib=p.a===leaf?p.b:p.a;    // sibling is promoted into p's slot
+  replaceNode(p,sib);
+  if(active===leaf)setActive(firstLeaf(sib));
+}
+function firstLeaf(n){while(n.kind!=='leaf')n=n.a;return n;}
+
+const seed=makeLeaf(SEED);root.appendChild(seed.el);setActive(seed);
+addEventListener('resize',()=>leaves.forEach(fit));
 </script>
 </body></html>"##;
 

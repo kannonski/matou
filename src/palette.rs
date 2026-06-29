@@ -239,16 +239,15 @@ fn rest_ratio(l: &Layout) -> Vec<f64> {
 }
 
 /// Launch the layout's panes in a new tab cwd'd to `dir`, then focus the editor + record frecency.
-/// Returns the editor (main pane) window id — the window to mirror when sharing the new tab.
-pub fn layout_build(l: &Layout, dir: &str) -> Option<i64> {
+pub fn layout_build(l: &Layout, dir: &str) {
     if l.panes.is_empty() {
-        return None;
+        return;
     }
     let base = dir.trim_end_matches('/').rsplit('/').next().unwrap_or("");
     let title = if base.is_empty() { dir.to_string() } else { base.to_string() };
     let ed = launch_tab(&l.panes[0], &title, dir);
     if ed.is_empty() {
-        return None; // editor tab failed — don't chain (a chain off "" would blind-split the overlay)
+        return; // editor tab failed — don't chain (a chain off "" would blind-split the overlay)
     }
     match l.shape.as_str() {
         "single" => {}
@@ -268,7 +267,6 @@ pub fn layout_build(l: &Layout, dir: &str) -> Option<i64> {
         .args(["@", "focus-window", "--match", &format!("id:{ed}")])
         .status();
     let _ = std::process::Command::new("zoxide").args(["add", dir]).status();
-    ed.parse().ok()
 }
 
 // ── tool recognition (icon + accent per command) ──────────────────────────────────────────────

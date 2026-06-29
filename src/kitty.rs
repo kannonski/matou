@@ -199,3 +199,9 @@ pub fn open_tabs() -> anyhow::Result<(Vec<OpenTab>, HashSet<String>)> {
     Ok((tabs, cwds))
 }
 
+/// Open a fresh tab (a shell) cwd'd to `dir` and return its window id — the seed pane when sharing
+/// a not-yet-open project into kittyweb. `--keep-focus` so it doesn't yank focus from the overlay.
+pub fn new_tab_in(dir: &str) -> Option<i64> {
+    capture(&["launch", "--type=tab", "--cwd", dir, "--keep-focus"]).parse().ok()
+}
+

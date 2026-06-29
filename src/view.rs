@@ -247,12 +247,8 @@ fn cursor() -> Span<'static> {
 fn header_line(m: &Model) -> Line<'static> {
     match m.mode.as_str() {
         "layout" => Line::from(vec![
-            prompt(&format!(
-                "{} {}",
-                if m.lay_share { "share — layout for" } else { "layout for" },
-                crate::model::basename(&m.lay_dir)
-            )),
-            dim(if m.lay_share { "   ↵ build + share · esc back" } else { "   ↵ build · esc back" }),
+            prompt(&format!("layout for {}", crate::model::basename(&m.lay_dir))),
+            dim("   ↵ build · esc back"),
         ]),
         "rename" => Line::from(vec![prompt("rename tab ❯ "), Span::raw(m.rinput.clone()), cursor()]),
         "move" => {
@@ -281,7 +277,6 @@ fn header_line(m: &Model) -> Line<'static> {
 
 fn footer_line(m: &Model, w: usize) -> Line<'static> {
     let f = match m.mode.as_str() {
-        "layout" if m.lay_share => "j/k pick · l/↵ build + share · h back".to_string(),
         "layout" => "j/k pick · l/↵ build · h back".to_string(),
         "rename" => "enter save · esc cancel".to_string(),
         "move" if m.move_src == 0 => "j/k pick · ↵ choose this pane · esc cancel".to_string(),

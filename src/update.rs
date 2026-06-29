@@ -59,31 +59,33 @@ fn act_on(m: &mut Model) -> bool {
         return true;
     }
     m.lay_dir = dir;
-    m.lay_share = false;
     m.mode = "layout".into();
     m.lay_cur = 0;
     m.refresh_preview();
     false
 }
 
-/// Share the current selection: an already-open tab is mirrored straight away; a project isn't
-/// open yet, so open the layout picker (with `lay_share`) and mirror the tab once it's built.
-/// Returns true if the app should quit.
+/// Share the current selection into kittyweb: an already-open tab is mirrored straight away; a
+/// project (not open yet) gets a fresh tab in its directory, which is then mirrored — you compose
+/// any extra panes in the browser. Returns true if the app should quit.
 fn share_on(m: &mut Model) -> bool {
     let (kind, win_id, dir) = match m.sel() {
         Some(it) => (it.kind.clone(), it.win_id, it.dir.clone()),
         None => return false,
     };
-    if kind == "open" {
-        crate::mirror::start_detached(win_id, 9123, false);
-        return true; // matou quits; the daemon keeps serving and the browser opens
-    }
-    m.lay_dir = dir;
-    m.lay_share = true;
-    m.mode = "layout".into();
-    m.lay_cur = 0;
-    m.refresh_preview();
-    false
+    let window = if kind == "open" {
+        win_id
+    } else {
+        match kitty::new_tab_in(&dir) {
+            Some(w) => w,
+            None => {
+                m.status = "couldn't open a tab".into();
+                return false;
+            }
+        }
+    };
+    crate::mirror::start_detached(window, 9123, false);
+    true // matou quits; the daemon keeps serving and the browser opens kittyweb
 }
 
 fn update_nav(m: &mut Model, k: KeyEvent) -> bool {
@@ -124,7 +126,6 @@ fn update_nav(m: &mut Model, k: KeyEvent) -> bool {
         (Char('.'), false) => {
             if !m.cwd.is_empty() {
                 m.lay_dir = m.cwd.clone();
-                m.lay_share = false;
                 m.mode = "layout".into();
                 m.lay_cur = 0;
                 m.refresh_preview();
@@ -187,10 +188,7 @@ fn update_layout(m: &mut Model, k: KeyEvent) -> bool {
         (Enter, _) | (Char('l'), false) => {
             if let Some(l) = m.layouts.get(m.lay_cur).cloned() {
                 let dir = m.lay_dir.clone();
-                let win = palette::layout_build(&l, &dir);
-                if let Some(w) = win.filter(|_| m.lay_share) {
-                    crate::mirror::start_detached(w, 9123, false);
-                }
+                palette::layout_build(&l, &dir);
                 return false;
             }
         }
@@ -460,30 +458,6 @@ mod tests {
         assert_eq!(m.lay_cur, 0);
         update(&mut m, Msg::Key(key('h')), &tx); // back to nav
         assert_eq!(m.mode, "");
-    }
-
-    #[test]
-    fn open_project_layout_is_not_share() {
-        let tx = dummy_tx();
-        let mut m = Model::default();
-        m.all.push(Item { kind: "project".into(), dir: "/p".into(), ..Default::default() });
-        m.view = vec![0];
-        update(&mut m, Msg::Key(key('l')), &tx);
-        assert_eq!(m.mode, "layout");
-        assert!(!m.lay_share);
-    }
-
-    // `s` on a not-yet-open project routes through the layout picker in share mode (no build until ↵).
-    #[test]
-    fn share_on_project_opens_layout_in_share_mode() {
-        let tx = dummy_tx();
-        let mut m = Model::default();
-        m.all.push(Item { kind: "project".into(), dir: "/p".into(), ..Default::default() });
-        m.view = vec![0];
-        update(&mut m, Msg::Key(key('s')), &tx);
-        assert_eq!(m.mode, "layout");
-        assert!(m.lay_share);
-        assert_eq!(m.lay_dir, "/p");
     }
 
     #[test]
