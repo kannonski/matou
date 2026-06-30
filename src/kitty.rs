@@ -205,3 +205,14 @@ pub fn new_tab_in(dir: &str) -> Option<i64> {
     capture(&["launch", "--type=tab", "--cwd", dir, "--keep-focus"]).parse().ok()
 }
 
+/// Open a shell in a brand-new, **hidden** OS window cwd'd to `dir` and return its window id — the
+/// seed for a canvas workspace. Hidden so it never shows as a kitty tab; the daemon resizes/closes
+/// it. Safe (unlike the old split workspace) because the canvas only ever *creates* windows.
+pub fn new_hidden_oswindow_in(dir: &str) -> Option<i64> {
+    let id: i64 = capture(&["launch", "--type=os-window", "--cwd", dir, "--keep-focus"]).parse().ok()?;
+    let _ = Command::new("kitty")
+        .args(["@", "resize-os-window", "--action", "hide", "--match", &format!("id:{id}")])
+        .status();
+    Some(id)
+}
+

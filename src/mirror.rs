@@ -22,8 +22,8 @@ use std::net::{TcpListener, TcpStream};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 // (cert hash as dotted-hex, quic port) — set once at startup if WebTransport comes up, then read
@@ -38,6 +38,25 @@ static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 // ever connected — together they let the daemon exit once the browser is gone (no lingering daemon).
 static STREAMS: AtomicUsize = AtomicUsize::new(0);
 static SEEN_CLIENT: AtomicBool = AtomicBool::new(false);
+
+// Windows the canvas created (drawn cards, + the seed when it's a project's hidden OS window). The
+// daemon owns these — it resizes them and closes them on teardown. An open-tab seed isn't in here,
+// so it's left untouched.
+static OWNED_WINS: Mutex<Vec<i64>> = Mutex::new(Vec::new());
+fn own_window(id: i64) {
+    let Ok(mut v) = OWNED_WINS.lock() else { return };
+    if !v.contains(&id) {
+        v.push(id);
+    }
+}
+fn disown_window(id: i64) {
+    if let Ok(mut v) = OWNED_WINS.lock() {
+        v.retain(|&x| x != id);
+    }
+}
+fn is_owned(id: i64) -> bool {
+    OWNED_WINS.lock().map(|v| v.contains(&id)).unwrap_or(false)
+}
 
 /// matou's config dir (where the mirror keeps its pidfile + ticket).
 pub(crate) fn home() -> PathBuf {
@@ -82,13 +101,77 @@ fn stop(port: u16) -> Result<()> {
     Ok(())
 }
 
-/// End this mirror session and exit: signal connected pages (`event: end`), drop the pidfile, go.
-/// Leaves the user's windows alone — sharing just stops mirroring them.
+/// End this mirror session and exit: signal connected pages (`event: end`), close every window the
+/// canvas created (the user's own open-tab seed is never owned, so it's left alone), then go.
 fn shutdown_now() -> ! {
     SHUTDOWN.store(true, Ordering::Relaxed);
+    let owned: Vec<i64> = OWNED_WINS.lock().map(|v| v.clone()).unwrap_or_default();
+    for id in owned {
+        let _ = Command::new("kitty")
+            .args(["@", "close-window", "--match", &format!("id:{id}")])
+            .status();
+    }
     let _ = std::fs::remove_file(pidfile());
     std::thread::sleep(Duration::from_millis(300));
     std::process::exit(0);
+}
+
+/// Create a shell in a fresh hidden OS window, sized to `cols`×`rows` cells, and return its id.
+/// The canvas's "draw a rectangle → terminal". Owned, so it's torn down with the session.
+fn spawn_window(cols: u16, rows: u16, cwd: &str) -> Option<i64> {
+    let mut a = vec!["@".to_string(), "launch".into(), "--type=os-window".into(), "--keep-focus".into()];
+    if !cwd.is_empty() {
+        a.push("--cwd".into());
+        a.push(cwd.to_string());
+    }
+    let out = Command::new("kitty").args(&a).output().ok()?;
+    let id: i64 = String::from_utf8_lossy(&out.stdout).trim().parse().ok()?;
+    let _ = Command::new("kitty")
+        .args(["@", "resize-os-window", "--action", "hide", "--match", &format!("id:{id}")])
+        .status();
+    resize_window(id, cols, rows);
+    own_window(id);
+    Some(id)
+}
+
+/// Resize an owned window's OS window to `cols`×`rows` cells (clamped to a sane minimum), so its
+/// grid follows the card and text stays crisp instead of being scaled.
+fn resize_window(id: i64, cols: u16, rows: u16) {
+    let c = cols.clamp(8, 500).to_string();
+    let r = rows.clamp(3, 300).to_string();
+    let _ = Command::new("kitty")
+        .args(["@", "resize-os-window", "--action", "resize", "--unit", "cells", "--width", &c, "--height", &r, "--match", &format!("id:{id}")])
+        .status();
+}
+
+/// A short human name for window `id` — the running command if it isn't the shell, else the cwd
+/// basename. Shown on the card's titlebar and its collapsed chip.
+fn window_name(id: &str) -> String {
+    let Ok(out) = Command::new("kitty").args(["@", "ls"]).output() else { return "term".into() };
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else { return "term".into() };
+    let shellish = |s: &str| matches!(s, "zsh" | "bash" | "fish" | "sh" | "-zsh" | "-bash" | "-fish");
+    for ow in v.as_array().into_iter().flatten() {
+        for tab in ow["tabs"].as_array().into_iter().flatten() {
+            for w in tab["windows"].as_array().into_iter().flatten() {
+                if w["id"].as_u64().map(|x| x.to_string()).as_deref() != Some(id) {
+                    continue;
+                }
+                let fg = w["foreground_processes"]
+                    .as_array()
+                    .and_then(|a| a.last())
+                    .and_then(|p| p["cmdline"].as_array())
+                    .and_then(|c| c.first())
+                    .and_then(|s| s.as_str())
+                    .map(|s| s.rsplit('/').next().unwrap_or(s).to_string());
+                if let Some(c) = fg.filter(|c| !c.is_empty() && !shellish(c)) {
+                    return c;
+                }
+                let base = w["cwd"].as_str().unwrap_or("").rsplit('/').next().unwrap_or("");
+                return if base.is_empty() { "term".into() } else { base.to_string() };
+            }
+        }
+    }
+    "term".into()
 }
 
 pub fn run(args: &[String]) -> Result<()> {
@@ -97,11 +180,13 @@ pub fn run(args: &[String]) -> Result<()> {
     let mut bind = "127.0.0.1".to_string();
     let mut do_stop = false;
     let mut p2p = false;
+    let mut owned_seed = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--stop" => do_stop = true,
             "--p2p" => p2p = true,
+            "--owned-seed" => owned_seed = true,
             "--window" | "-w" => {
                 window = args.get(i + 1).cloned();
                 i += 1;
@@ -127,6 +212,11 @@ pub fn run(args: &[String]) -> Result<()> {
     }
     let window = window.context("usage: chatons mirror --window <id> [--port <p>] [--bind <addr>]")?;
     let matchspec = format!("id:{window}");
+    // a project seed is a hidden OS window we made → own it so teardown closes it; an open-tab seed
+    // is the user's window → leave it out so it survives.
+    if let (true, Ok(id)) = (owned_seed, window.parse::<i64>()) {
+        own_window(id);
+    }
 
     // bind, retrying briefly so a just-killed predecessor has time to release the port
     let mut listener = None;
@@ -172,41 +262,32 @@ pub fn run(args: &[String]) -> Result<()> {
         std::thread::spawn(move || crate::mirror_p2p::serve(ms));
     }
 
-    // watchdog: the daemon is detached, so exit on its own once the workspace is gone — otherwise
-    // closing the tab leaves an orphaned daemon (the "zombie"). kittyweb panes are all windows in
-    // the seed's tab, so track the *tab*: the session lives as long as any pane remains, and ends
-    // only when the tab is empty/closed (falls back to the seed window if the tab can't resolve).
+    // watchdog: the daemon is detached, so it must exit on its own once the browser is gone — the
+    // canvas's windows span many OS windows, so the lifeline is the browser connection, not any one
+    // window. Exit when every pane's SSE has dropped (after a browser ever connected), or if no
+    // browser shows up at all (e.g. the open failed). `shutdown_now` then closes the owned windows.
     {
-        let win = window.clone();
-        let tab_id = tab_of_window(&window);
         std::thread::spawn(move || {
-            let mut misses = 0;
             let mut gone = 0;
+            let mut never = 0;
             loop {
                 std::thread::sleep(Duration::from_secs(2));
-                // browser gone (every pane's SSE dropped after one ever connected) → stop serving
-                if SEEN_CLIENT.load(Ordering::Relaxed) && STREAMS.load(Ordering::Relaxed) == 0 {
-                    gone += 1;
-                    if gone >= 3 {
-                        // ~6s with no panes — longer than EventSource's reconnect, so a transient
-                        // drop won't trip it. /bye (sendBeacon on tab close) handles the fast path.
-                        shutdown_now();
-                    }
-                } else {
-                    gone = 0;
-                }
-                let alive = match tab_id {
-                    Some(t) => tab_alive(t),
-                    None => window_exists(&win),
-                };
-                match alive {
-                    Some(false) => {
-                        misses += 1;
-                        if misses >= 2 {
+                if SEEN_CLIENT.load(Ordering::Relaxed) {
+                    if STREAMS.load(Ordering::Relaxed) == 0 {
+                        gone += 1;
+                        if gone >= 3 {
+                            // ~6s with no panes — longer than EventSource's reconnect, so a
+                            // transient drop won't trip it. /bye (sendBeacon) is the fast path.
                             shutdown_now();
                         }
+                    } else {
+                        gone = 0;
                     }
-                    _ => misses = 0, // alive, or a transient `kitty @ ls` failure → don't exit
+                } else {
+                    never += 1;
+                    if never >= 15 {
+                        shutdown_now(); // ~30s and no browser ever connected → give up
+                    }
                 }
             }
         });
@@ -279,30 +360,45 @@ fn handle(mut stream: TcpStream, seed: &str) -> Result<()> {
         )?,
         ("GET", "/size") => {
             let (c, r) = window_size(&matchspec);
-            respond(&mut stream, "200 OK", "application/json", format!("{{\"cols\":{c},\"rows\":{r}}}").as_bytes())?;
+            let body = json!({"cols": c, "rows": r, "name": window_name(matchspec.strip_prefix("id:").unwrap_or(&matchspec))});
+            respond(&mut stream, "200 OK", "application/json", body.to_string().as_bytes())?;
         }
         ("GET", "/stream") => stream_loop(&mut stream, &matchspec)?,
+        ("GET", "/heartbeat") => heartbeat_loop(&mut stream)?,
         ("POST", "/key") => {
             let mut body = vec![0u8; content_length];
             reader.read_exact(&mut body)?;
             send_input(&matchspec, &body);
             write!(stream, "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")?;
         }
-        ("POST", "/split") => {
-            // grow the workspace: split the given window and report the new window's id
-            let side = query_param(query, "side").unwrap_or_default();
-            let from = win.clone().unwrap_or_else(|| seed_id.to_string());
-            let body = match split_window(&from, &side) {
-                Some(id) => format!("{{\"w\":{id}}}"),
+        ("POST", "/spawn") => {
+            // draw a rectangle → a fresh terminal sized to it, in the seed's directory
+            let cols = query_param(query, "cols").and_then(|s| s.parse().ok()).unwrap_or(80);
+            let rows = query_param(query, "rows").and_then(|s| s.parse().ok()).unwrap_or(24);
+            let cwd = window_cwd(seed_id).unwrap_or_default();
+            let body = match spawn_window(cols, rows, &cwd) {
+                Some(id) => json!({"w": id, "name": window_name(&id.to_string())}).to_string(),
                 None => "{\"w\":null}".to_string(),
             };
             respond(&mut stream, "200 OK", "application/json", body.as_bytes())?;
+        }
+        ("POST", "/resize") => {
+            // a card was resized → match its window's grid (owned windows only; never the user's seed)
+            if let Some(w) = win.as_deref().and_then(|s| s.parse::<i64>().ok()).filter(|&w| is_owned(w)) {
+                let cols = query_param(query, "cols").and_then(|s| s.parse().ok()).unwrap_or(80);
+                let rows = query_param(query, "rows").and_then(|s| s.parse().ok()).unwrap_or(24);
+                resize_window(w, cols, rows);
+            }
+            write!(stream, "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")?;
         }
         ("POST", "/close") => {
             if let Some(w) = &win {
                 let _ = Command::new("kitty")
                     .args(["@", "close-window", "--match", &format!("id:{w}")])
                     .status();
+                if let Ok(id) = w.parse::<i64>() {
+                    disown_window(id);
+                }
             }
             write!(stream, "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")?;
         }
@@ -326,32 +422,7 @@ fn query_param(query: &str, key: &str) -> Option<String> {
     })
 }
 
-/// Split window `w` (`right` → vsplit, else `down`/hsplit) and return the new window's id. The new
-/// pane inherits `w`'s cwd. `--next-to` only honours a target in the *active* tab, so focus `w`
-/// first — otherwise the split lands in whatever tab the user last touched. `--keep-focus` then
-/// leaves focus on `w` (the new pane is grafted in beside it).
-fn split_window(w: &str, side: &str) -> Option<i64> {
-    let loc = if side == "down" { "hsplit" } else { "vsplit" };
-    let _ = Command::new("kitty")
-        .args(["@", "focus-window", "--match", &format!("id:{w}")])
-        .status();
-    let mut args = vec![
-        "@".to_string(),
-        "launch".into(),
-        format!("--location={loc}"),
-        "--next-to".into(),
-        format!("id:{w}"),
-        "--keep-focus".into(),
-    ];
-    if let Some(cwd) = window_cwd(w) {
-        args.push("--cwd".into());
-        args.push(cwd);
-    }
-    let out = Command::new("kitty").args(&args).output().ok()?;
-    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
-}
-
-/// Window `id`'s cwd from `kitty @ ls`, so a new split opens in the same directory.
+/// Window `id`'s cwd from `kitty @ ls`, so a drawn terminal opens in the seed's directory.
 fn window_cwd(id: &str) -> Option<String> {
     let out = Command::new("kitty").args(["@", "ls"]).output().ok()?;
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
@@ -414,11 +485,34 @@ impl FrameSource {
 }
 
 /// Decrements the live-stream count on drop, so the disconnect watchdog sees the browser leave no
-/// matter how `stream_loop` returns.
+/// matter how the stream loop returns.
 struct StreamGuard;
 impl Drop for StreamGuard {
     fn drop(&mut self) {
         STREAMS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// One SSE connection per open page, counted like a pane so the daemon stays alive while the page is
+/// open even with zero terminals — and exits once the page (and so this stream) is gone. Emits the
+/// same `event: end` on shutdown so the page can close itself.
+fn heartbeat_loop(stream: &mut TcpStream) -> Result<()> {
+    write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
+    )?;
+    STREAMS.fetch_add(1, Ordering::Relaxed);
+    SEEN_CLIENT.store(true, Ordering::Relaxed);
+    let _guard = StreamGuard;
+    loop {
+        if SHUTDOWN.load(Ordering::Relaxed) {
+            write!(stream, "event: end\r\ndata: bye\r\n\r\n")?;
+            stream.flush()?;
+            return Ok(());
+        }
+        stream.write_all(b": beat\r\n\r\n")?;
+        stream.flush()?;
+        std::thread::sleep(Duration::from_secs(1));
     }
 }
 
@@ -625,41 +719,8 @@ fn send_keys_spawn(matchspec: &str, bytes: &[u8]) {
     }
 }
 
-/// The id of the tab containing window `id`, resolved once at startup so the watchdog can track the
-/// whole workspace (all kittyweb panes live in this tab) rather than the single seed window.
-fn tab_of_window(id: &str) -> Option<i64> {
-    let out = Command::new("kitty").args(["@", "ls"]).output().ok()?;
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
-    for ow in v.as_array().into_iter().flatten() {
-        for tab in ow["tabs"].as_array().into_iter().flatten() {
-            for w in tab["windows"].as_array().into_iter().flatten() {
-                if w["id"].as_u64().map(|x| x.to_string()).as_deref() == Some(id) {
-                    return tab["id"].as_i64();
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Whether tab `tab_id` still holds at least one window. None on a transient `kitty @ ls` failure.
-fn tab_alive(tab_id: i64) -> Option<bool> {
-    let out = Command::new("kitty").args(["@", "ls"]).output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
-    let alive = v.as_array().into_iter().flatten().any(|ow| {
-        ow["tabs"].as_array().into_iter().flatten().any(|t| {
-            t["id"].as_i64() == Some(tab_id)
-                && t["windows"].as_array().is_some_and(|w| !w.is_empty())
-        })
-    });
-    Some(alive)
-}
-
 /// Whether window `id` still exists: Some(true/false) if `kitty @ ls` succeeded, None on a
-/// transient failure (so the watchdog won't kill the daemon on a hiccup).
+/// transient failure (so the per-pane `gone` check won't fire on a hiccup).
 fn window_exists(id: &str) -> Option<bool> {
     let out = Command::new("kitty").args(["@", "ls"]).output().ok()?;
     if !out.status.success() {
@@ -772,178 +833,218 @@ fn font_family() -> String {
 fn page(seed: &str) -> String {
     let c = kitty_colors();
     let bg = c.get("background").cloned().unwrap_or_else(|| "#1e1e1e".into());
+    // an owned seed (a hidden OS window we made) may be resized to its card; the user's own open-tab
+    // seed must not be, so the page just scales it to fit.
+    let owned = seed.parse::<i64>().map(is_owned).unwrap_or(false);
     PAGE.replace("__FONT__", &font_family())
         .replace("__THEME__", &theme_json(&c))
         .replace("__BG__", &bg)
         .replace("__SEED__", seed)
+        .replace("__SEED_OWNED__", if owned { "true" } else { "false" })
 }
 
-// kittyweb: a composable workspace. Each pane is a real kitty window (xterm.js fed by SSE, input
-// POSTed back). The browser owns the split tree — hovering a pane shows a `+` on its right edge
-// (vsplit) and bottom edge (hsplit); clicking launches a real kitty split and grafts the new pane
-// into the tree as nested flexboxes. No preset layouts — you build the layout by growing it.
+// kittyweb: a spatial canvas. Draw a rectangle on empty space → a fresh terminal (a hidden kitty OS
+// window sized to the rect). Drag the titlebar to move, the corner to resize, collapse to a name
+// chip, close to dismiss. Each card is a real kitty window — xterm.js fed by SSE, input POSTed back;
+// a /heartbeat stream keeps the daemon alive while the page is open, even with zero cards.
 const PAGE: &str = r##"<!doctype html>
 <html><head><meta charset=utf-8><title>kittyweb</title>
 <link rel=stylesheet href=/xterm.css>
 <style>
- html,body{margin:0;height:100%;background:__BG__;overflow:hidden;font-family:monospace}
- #root{position:absolute;inset:0;display:flex}
- #root>*{flex:1 1 0;min-width:0;min-height:0}
- .split{display:flex;flex:1 1 0;min-width:0;min-height:0;gap:2px}
- .split.row{flex-direction:row}
- .split.col{flex-direction:column}
- .split>*{flex:1 1 0;min-width:0;min-height:0}
- .pane{position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;
-   background:__BG__;box-shadow:inset 0 0 0 1px #2a2a3a}
- .pane.act{box-shadow:inset 0 0 0 1px #8aadf4}
- .pane .term{transform-origin:center center}
+ :root{--mantle:#181825;--s0:#313244;--ov0:#6c7086;--ov1:#7f849c;--text:#cdd6f4;--sub:#a6adc8;
+   --blue:#8aadf4;--red:#f38ba8;--green:#a6e3a1}
+ html,body{margin:0;height:100%;overflow:hidden;font-family:ui-sans-serif,system-ui,sans-serif;color:var(--text)}
+ .canvas{position:fixed;inset:0;background:#11111b;cursor:crosshair;
+   background-image:radial-gradient(#262638 1.1px,transparent 1.1px);background-size:23px 23px;background-position:-1px -1px}
+ .hud{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:1000;pointer-events:none}
+ .hud .pill{background:#181825e6;border:1px solid #2a2a40;border-radius:999px;padding:7px 14px;
+   font:12.5px ui-monospace,monospace;color:var(--sub)}
+ .hud .pill b{color:var(--blue)}
+ #bar{position:fixed;right:12px;bottom:10px;z-index:1000;font:11px ui-monospace,monospace;
+   color:var(--ov0);background:#181825aa;padding:3px 8px;border-radius:6px;pointer-events:none}
+ .rubber{position:absolute;z-index:900;border:1.5px dashed var(--blue);background:#8aadf41a;
+   border-radius:8px;pointer-events:none}
+ .card{position:absolute;display:flex;flex-direction:column;background:__BG__;border-radius:10px;
+   overflow:hidden;box-shadow:inset 0 0 0 1px #2c2c40,0 14px 36px -18px #000d;transition:box-shadow .14s}
+ .card.act{box-shadow:inset 0 0 0 1.5px var(--blue),0 20px 48px -20px #000e}
+ .card.spawn{animation:pop .16s ease}
+ @keyframes pop{from{transform:scale(.96);opacity:.5}to{transform:scale(1);opacity:1}}
+ .tbar{display:flex;align-items:center;gap:8px;height:28px;padding:0 6px 0 10px;flex:none;
+   background:var(--mantle);cursor:grab;user-select:none;border-bottom:1px solid #0003}
+ .tbar:active{cursor:grabbing}
+ .dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex:none;box-shadow:0 0 6px #a6e3a166}
+ .name{font:12px ui-monospace,monospace;color:var(--sub);white-space:nowrap;overflow:hidden;
+   text-overflow:ellipsis;flex:1;min-width:0}
+ .tb{display:flex;gap:2px;flex:none}
+ .tb button{width:20px;height:20px;border:0;background:transparent;color:var(--ov1);border-radius:5px;
+   cursor:pointer;font:600 13px/1 ui-sans-serif,sans-serif;display:flex;align-items:center;
+   justify-content:center;transition:background .12s,color .12s}
+ .tb button:hover{background:var(--s0);color:var(--text)}
+ .tb button.x:hover{background:var(--red);color:#11111b}
+ .body{position:relative;flex:1;min-height:0;overflow:hidden}
+ .host{position:absolute;top:0;left:0;transform-origin:0 0}
  .xterm,.xterm-viewport{background:__BG__ !important}
- .bar{position:absolute;z-index:6;top:8px;left:50%;transform:translate(-50%,-8px);
-   display:flex;gap:3px;padding:4px;background:#181825ee;border:1px solid #2c2c44;
-   border-radius:11px;box-shadow:0 6px 18px -6px #000c;
-   opacity:0;pointer-events:none;transition:opacity .14s ease,transform .14s ease}
- .pane:hover .bar{opacity:1;transform:translate(-50%,0);pointer-events:auto}
- .bar button{display:flex;align-items:center;justify-content:center;width:28px;height:26px;
-   border:0;border-radius:7px;background:transparent;color:#a6adc8;cursor:pointer;
-   transition:background .12s,color .12s}
- .bar button:hover{background:#8aadf4;color:#11111b}
- .bar button.x:hover{background:#f38ba8;color:#11111b}
- .bar .sep{width:1px;background:#2c2c44;margin:3px 1px}
- .ic{position:relative;width:13px;height:11px;border:1.6px solid currentColor;border-radius:2.5px}
- .ic::after{content:"";position:absolute;background:currentColor}
- .ic.v::after{top:-1.6px;bottom:-1.6px;left:50%;width:1.6px;transform:translateX(-50%)}
- .ic.h::after{left:-1.6px;right:-1.6px;top:50%;height:1.6px;transform:translateY(-50%)}
- #bar{position:fixed;bottom:0;right:0;font:11px monospace;color:#999;background:#000a;
-   padding:3px 7px;z-index:10}
+ .grip{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;z-index:5}
+ .grip::after{content:"";position:absolute;right:3px;bottom:3px;width:7px;height:7px;
+   border-right:2px solid var(--ov1);border-bottom:2px solid var(--ov1)}
+ .card.act .grip::after{border-color:var(--blue)}
+ .card.col{width:auto!important;height:auto!important;cursor:default}
+ .card.col .body,.card.col .grip{display:none}
+ .card.col .tbar{border-bottom:0;border-radius:10px}
+ .card.col .name{max-width:220px}
+ @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style></head>
 <body>
-<div id=root></div>
-<div id=bar>kittyweb · live</div>
+<div class="canvas" id="canvas"></div>
+<div class="hud"><div class="pill"><b>drag</b> empty space → new terminal · titlebar to move · corner to resize</div></div>
+<div id=bar>kittyweb</div>
 <script src=/xterm.js></script>
 <script>
-const THEME=__THEME__,FONT="__FONT__",SEED="__SEED__";
-const bar=document.getElementById('bar'),root=document.getElementById('root');
-const leaves=new Set();
-let active=null,ended=false;
+const THEME=__THEME__,FONT="__FONT__",SEED="__SEED__",SEED_OWNED=__SEED_OWNED__;
+const CW=7.8,CH=17; // approx cell px at 13px font, for px→grid; the daemon returns the real grid
+const canvas=document.getElementById('canvas'),bar=document.getElementById('bar');
+const cards=new Set();
+let z=10,active=null,ended=false,hb=null;
 
 function endSession(){
   if(ended)return;ended=true;
-  bar.textContent='kittyweb · ended';
-  window.close(); // works for a script-opened window; a normal tab can't self-close → notice below
+  try{hb&&hb.close()}catch(_){}
+  window.close();
   setTimeout(()=>{document.title='kittyweb — ended';
-    document.body.innerHTML='<div style="position:absolute;inset:0;display:flex;'+
-      'align-items:center;justify-content:center;color:#888;font:14px monospace">'+
-      'session ended — you can close this tab</div>';},120);
+    document.body.innerHTML='<div style="position:fixed;inset:0;display:flex;align-items:center;'+
+      'justify-content:center;color:#888;font:14px ui-monospace,monospace">session ended — you can close this tab</div>';},120);
 }
-function updateBar(){if(!ended)bar.textContent='kittyweb · '+leaves.size+' pane'+(leaves.size>1?'s':'');}
+function updateBar(){if(!ended)bar.textContent='kittyweb · '+cards.size+' terminal'+(cards.size===1?'':'s');}
+function gridOf(w,h){return{cols:Math.max(8,Math.round(w/CW)),rows:Math.max(3,Math.round(h/CH))};}
 
-// scale a pane's source-sized grid to fit its (flex-sized) box
-function fit(leaf){const el=leaf.el,h=leaf.host,nw=h.offsetWidth,nh=h.offsetHeight;
-  if(!nw||!nh||!el.clientWidth)return;
-  const s=Math.min((el.clientWidth-2)/nw,(el.clientHeight-2)/nh);
-  h.style.transform='scale('+(s>0?s:0.01)+')';}
-// re-poll the window's *real* grid — kitty re-tiles each window on split/close, so the grid shrinks
-// with the box and the scale stays consistent across panes (without this the old grid is squeezed
-// into an ever-smaller box and the pane zooms way out).
-function refit(leaf){
-  fetch('/size?w='+leaf.win).then(r=>r.json()).then(s=>{
-    if(s&&s.cols&&s.rows)leaf.term.resize(s.cols,s.rows);
-    fit(leaf);
-  }).catch(()=>fit(leaf));
-}
-function refitAll(){setTimeout(()=>leaves.forEach(refit),60);setTimeout(()=>leaves.forEach(refit),300);}
-
-// a toolbar button: a split icon (v|h) or the × close, wired to fn
-function tbtn(title,fn,icon,cls){
-  const b=document.createElement('button');b.title=title;if(cls)b.className=cls;
-  if(icon==='x'){b.textContent='×';}
-  else{const s=document.createElement('span');s.className='ic '+icon;b.appendChild(s);}
-  b.onclick=e=>{e.stopPropagation();fn();};return b;
-}
-function toolbar(leaf){
-  const bar=document.createElement('div');bar.className='bar';
-  const sep=document.createElement('span');sep.className='sep';
-  bar.append(
-    tbtn('split right',()=>split(leaf,'right'),'v'),
-    tbtn('split down',()=>split(leaf,'down'),'h'),
-    sep,
-    tbtn('close pane',()=>closeLeaf(leaf),'x','x'),
-  );
-  return bar;
+// scale a card's terminal grid to fill its body box (≈1 since the window is resized to match)
+function fit(card){const b=card.body,h=card.host,nw=h.offsetWidth,nh=h.offsetHeight;
+  if(!nw||!nh||!b.clientWidth)return;
+  h.style.transform='scale('+Math.min(b.clientWidth/nw,b.clientHeight/nh)+')';}
+function refit(card){fetch('/size?w='+card.win).then(r=>r.json()).then(s=>{
+  if(s&&s.cols&&s.rows)card.term.resize(s.cols,s.rows);
+  if(s&&s.name)card.nameEl.textContent=s.name;fit(card);}).catch(()=>fit(card));}
+// owned cards re-grid their kitty window to match the body (crisp text); the user's open-tab seed
+// isn't owned, so we just scale its existing grid to fit.
+function syncSize(card){
+  if(!card.owned){fit(card);return;}
+  const g=gridOf(card.body.clientWidth,card.body.clientHeight);
+  fetch('/resize?w='+card.win+'&cols='+g.cols+'&rows='+g.rows,{method:'POST'}).then(()=>refit(card)).catch(()=>fit(card));
 }
 
-function setActive(leaf){if(active)active.el.classList.remove('act');
-  active=leaf;if(leaf){leaf.el.classList.add('act');leaf.term.focus();}}
-
-function makeLeaf(win){
-  const el=document.createElement('div');el.className='pane';
-  const host=document.createElement('div');host.className='term';el.appendChild(host);
-  const leaf={kind:'leaf',win,el,host,term:null,es:null,parent:null};
-  el.appendChild(toolbar(leaf));
-  const term=new Terminal({fontFamily:FONT,fontSize:13,cursorBlink:false,scrollback:0,theme:THEME});
-  term.open(host);leaf.term=term;
-  el.addEventListener('mousedown',()=>setActive(leaf));
-  term.onData(d=>fetch('/key?w='+win,{method:'POST',body:d}));
-  refit(leaf); // size to the real window grid, then scale to the box
-  const es=new EventSource('/stream?w='+win);leaf.es=es;
-  es.onmessage=e=>{term.write(Uint8Array.from(atob(e.data),c=>c.charCodeAt(0)));fit(leaf);};
+function openStream(card){
+  const es=new EventSource('/stream?w='+card.win);card.es=es;
+  es.onmessage=e=>{card.term.write(Uint8Array.from(atob(e.data),c=>c.charCodeAt(0)));fit(card);};
   es.addEventListener('end',endSession);
-  es.addEventListener('gone',()=>dropLeaf(leaf,false)); // window closed in the terminal → drop pane
-  new ResizeObserver(()=>fit(leaf)).observe(el);
-  leaves.add(leaf);updateBar();
-  return leaf;
+  es.addEventListener('gone',()=>dropCard(card,false)); // window closed in the terminal → drop card
 }
 
-// graft `newn` where `oldn` sits (root, or a child slot of its parent split)
-function replaceNode(oldn,newn){
-  const p=oldn.parent;newn.parent=p;
-  if(!p){root.replaceChild(newn.el,oldn.el);return;}
-  if(p.a===oldn)p.a=newn;else p.b=newn;
-  p.el.replaceChild(newn.el,oldn.el);
+function tb(txt,title,fn,cls){const b=document.createElement('button');b.textContent=txt;b.title=title;
+  if(cls)b.className=cls;b.onclick=e=>{e.stopPropagation();fn();};return b;}
+
+function makeCard(win,x,y,w,h,name,owned){
+  const card={win,owned:!!owned,x,y,w,h,collapsed:false};
+  const el=document.createElement('div');el.className='card spawn';
+  el.style.cssText='left:'+x+'px;top:'+y+'px;width:'+w+'px;height:'+h+'px;z-index:'+(++z);
+  const tbar=document.createElement('div');tbar.className='tbar';
+  const dot=document.createElement('span');dot.className='dot';
+  const nm=document.createElement('span');nm.className='name';nm.textContent=name||'term';
+  const tbs=document.createElement('span');tbs.className='tb';
+  const minb=tb('─','collapse',()=>toggleCollapse(card));
+  tbs.append(minb,tb('×','close',()=>closeCard(card),'x'));
+  tbar.append(dot,nm,tbs);
+  const body=document.createElement('div');body.className='body';
+  const host=document.createElement('div');host.className='host';body.appendChild(host);
+  const grip=document.createElement('div');grip.className='grip';
+  el.append(tbar,body,grip);canvas.appendChild(el);
+  Object.assign(card,{el,body,host,nameEl:nm,collapseBtn:minb});
+  const term=new Terminal({fontFamily:FONT,fontSize:13,cursorBlink:false,scrollback:0,theme:THEME});
+  term.open(host);card.term=term;
+  term.onData(d=>fetch('/key?w='+win,{method:'POST',body:d}));
+  el.addEventListener('mousedown',e=>{e.stopPropagation();setActive(card);}); // don't start a draw
+  tbar.addEventListener('mousedown',e=>{if(e.target.tagName==='BUTTON')return;e.stopPropagation();startDrag('move',card,e);});
+  grip.addEventListener('mousedown',e=>{e.stopPropagation();startDrag('resize',card,e);});
+  new ResizeObserver(()=>fit(card)).observe(body);
+  cards.add(card);setActive(card);updateBar();
+  setTimeout(()=>el.classList.remove('spawn'),180);
+  if(owned)syncSize(card); else refit(card); // owned: grid to the card; seed: adopt its real grid
+  openStream(card);
+  return card;
 }
 
-function split(leaf,side){
-  fetch('/split?w='+leaf.win+'&side='+side,{method:'POST'}).then(r=>r.json()).then(({w})=>{
-    if(!w){bar.textContent='kittyweb · split failed';return;}
-    const nl=makeLeaf(w);
-    const sp={kind:'split',dir:side==='down'?'col':'row',a:leaf,b:nl,
-      el:document.createElement('div'),parent:null};
-    sp.el.className='split '+sp.dir;
-    replaceNode(leaf,sp);          // sp takes leaf's place in the tree + DOM
-    leaf.parent=sp;nl.parent=sp;
-    sp.el.append(leaf.el,nl.el);   // then leaf + new pane live inside sp
-    setActive(nl);
-    refitAll();                    // kitty halved the old window's grid — match it everywhere
-  }).catch(()=>{bar.textContent='kittyweb · split failed';});
+function setActive(card){if(active)active.el.classList.remove('act');
+  active=card;if(card){card.el.classList.add('act');card.el.style.zIndex=++z;card.term.focus();}}
+
+function toggleCollapse(card){
+  if(card.collapsed){
+    card.collapsed=false;card.el.classList.remove('col');
+    card.el.style.width=card.w+'px';card.el.style.height=card.h+'px';
+    card.collapseBtn.textContent='─';openStream(card);refit(card);
+  }else{
+    card.w=card.el.offsetWidth;card.h=card.el.offsetHeight;
+    card.collapsed=true;card.el.classList.add('col');card.collapseBtn.textContent='□';
+    if(card.es){card.es.close();card.es=null;} // pause polling while it's just a chip
+  }
 }
 
-// remove a pane from the tree. tellKitty=true (× button) also closes the kitty window; false is for
-// a window that's already gone (closed in the terminal → server sent `event: gone`).
-function dropLeaf(leaf,tellKitty){
-  if(!leaves.has(leaf))return;     // already dropped (guards a close/gone race)
-  if(tellKitty)fetch('/close?w='+leaf.win,{method:'POST'}).catch(()=>{});
-  if(leaf.es)leaf.es.close();
-  leaves.delete(leaf);updateBar();
-  const p=leaf.parent;
-  if(!p){endSession();return;}     // dropped the last pane
-  const sib=p.a===leaf?p.b:p.a;    // sibling is promoted into p's slot
-  replaceNode(p,sib);
-  if(active===leaf)setActive(firstLeaf(sib));
-  refitAll();                      // kitty reclaimed the space — match the new grids
+function dropCard(card,tellKitty){
+  if(!cards.has(card))return;
+  if(tellKitty)fetch('/close?w='+card.win,{method:'POST'}).catch(()=>{});
+  if(card.es)card.es.close();
+  card.el.remove();cards.delete(card);if(active===card)active=null;
+  updateBar(); // closing the last card just leaves an empty canvas — the heartbeat keeps us alive
 }
-function closeLeaf(leaf){dropLeaf(leaf,true);}
-function firstLeaf(n){while(n.kind!=='leaf')n=n.a;return n;}
+function closeCard(card){dropCard(card,true);}
 
-const seed=makeLeaf(SEED);root.appendChild(seed.el);setActive(seed);
-addEventListener('resize',()=>leaves.forEach(fit));
-addEventListener('pagehide',()=>{try{navigator.sendBeacon('/bye')}catch(_){}}); // browser gone → tear down
+// ── drag: move / resize ──
+let drag=null;
+function startDrag(mode,card,e){
+  setActive(card);if(card.collapsed&&mode==='resize')return;
+  drag={mode,card,sx:e.clientX,sy:e.clientY,ox:card.el.offsetLeft,oy:card.el.offsetTop,
+    ow:card.el.offsetWidth,oh:card.el.offsetHeight};
+  document.body.style.cursor=mode==='resize'?'nwse-resize':'grabbing';
+}
+// ── draw a rectangle on empty canvas → spawn ──
+let draw=null,rubber=null;
+canvas.addEventListener('mousedown',e=>{if(e.button!==0)return;
+  draw={sx:e.clientX,sy:e.clientY};
+  rubber=document.createElement('div');rubber.className='rubber';
+  rubber.style.cssText='left:'+e.clientX+'px;top:'+e.clientY+'px;width:0;height:0';
+  canvas.appendChild(rubber);});
+window.addEventListener('mousemove',e=>{
+  if(drag){const dx=e.clientX-drag.sx,dy=e.clientY-drag.sy,c=drag.card;
+    if(drag.mode==='move'){c.el.style.left=Math.max(0,drag.ox+dx)+'px';c.el.style.top=Math.max(0,drag.oy+dy)+'px';
+      c.x=c.el.offsetLeft;c.y=c.el.offsetTop;}
+    else{c.el.style.width=Math.max(160,drag.ow+dx)+'px';c.el.style.height=Math.max(80,drag.oh+dy)+'px';
+      c.w=c.el.offsetWidth;c.h=c.el.offsetHeight;}
+  }else if(draw){const x=Math.min(e.clientX,draw.sx),y=Math.min(e.clientY,draw.sy),
+    w=Math.abs(e.clientX-draw.sx),h=Math.abs(e.clientY-draw.sy);
+    rubber.style.cssText='left:'+x+'px;top:'+y+'px;width:'+w+'px;height:'+h+'px';}
+});
+window.addEventListener('mouseup',e=>{
+  document.body.style.cursor='';
+  if(drag){const d=drag;drag=null;if(d.mode==='resize')syncSize(d.card);return;}
+  if(draw){const x=Math.min(e.clientX,draw.sx),y=Math.min(e.clientY,draw.sy),
+    w=Math.abs(e.clientX-draw.sx),h=Math.abs(e.clientY-draw.sy);
+    rubber.remove();rubber=null;draw=null;
+    if(w>60&&h>50){const W=Math.max(200,w),H=Math.max(110,h),g=gridOf(W,H-28);
+      fetch('/spawn?cols='+g.cols+'&rows='+g.rows,{method:'POST'}).then(r=>r.json()).then(o=>{
+        if(o&&o.w)makeCard(o.w,x,y,W,H,o.name,true);else bar.textContent='kittyweb · spawn failed';
+      }).catch(()=>{bar.textContent='kittyweb · spawn failed';});}
+  }
+});
+
+// heartbeat keeps the daemon alive while this page is open (independent of how many cards exist)
+hb=new EventSource('/heartbeat');hb.addEventListener('end',endSession);
+addEventListener('pagehide',()=>{try{navigator.sendBeacon('/bye')}catch(_){}});
+makeCard(SEED,60,72,560,340,'',SEED_OWNED); // the share's seed terminal
 </script>
 </body></html>"##;
 
 /// Spawn the mirror daemon detached (setsid → its own session, inherits this process's kitty
 /// socket env) for `window`, open the browser, return the URL. Called from the matou TUI, which is
 /// a real kitty window (so it has KITTY_LISTEN_ON); the daemon survives matou closing.
-pub fn start_detached(window: i64, port: u16) -> String {
+pub fn start_detached(window: i64, port: u16, owned_seed: bool) -> String {
     // Reclaim the port: a daemon from an earlier share may still be squatting it
     // (its window outlived the share, or it predates the watchdog). Without this the
     // new daemon fails to bind and the browser connects to the stale one — which is
@@ -953,13 +1054,16 @@ pub fn start_detached(window: i64, port: u16) -> String {
     let exe = std::env::current_exe()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "matou".into());
-    let args = [
+    let mut args = vec![
         "mirror".to_string(),
         "--window".into(),
         window.to_string(),
         "--port".into(),
         port.to_string(),
     ];
+    if owned_seed {
+        args.push("--owned-seed".into()); // a hidden OS-window seed the daemon closes on teardown
+    }
     let _ = Command::new("setsid")
         .arg(&exe)
         .args(&args)
