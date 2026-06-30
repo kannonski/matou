@@ -38,6 +38,7 @@ fn main() -> Result<()> {
     match args.get(1).map(String::as_str) {
         Some("mirror") => return mirror::run(&args[2..]),
         Some("mirror-open") => return mirror_p2p::open(args.get(2)),
+        Some("web") => return launch_web(),
         Some("-once") | Some("--once") => return render_once(),
         _ => {}
     }
@@ -58,6 +59,23 @@ fn main() -> Result<()> {
         }
     }
     run_tui()
+}
+
+/// `matou web`: jump straight into matouweb (no picker overlay) — seed a shell in the current
+/// directory and hand off to the browser daemon. Bound to a kitty key via an overlay launch, so it
+/// runs with the kitty socket; the seed window is hidden and the canvas grows from there.
+fn launch_web() -> Result<()> {
+    let cwd = std::env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    match kitty::new_hidden_oswindow_in(&cwd) {
+        Some(w) => {
+            mirror::start_detached(w, 9123, true);
+            Ok(())
+        }
+        None => {
+            eprintln!("matou web: couldn't open a workspace — run inside kitty with remote control on");
+            std::process::exit(1);
+        }
+    }
 }
 
 fn run_tui() -> Result<()> {

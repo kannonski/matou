@@ -372,15 +372,24 @@ fn handle(mut stream: TcpStream, seed: &str) -> Result<()> {
             write!(stream, "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")?;
         }
         ("POST", "/spawn") => {
-            // draw a rectangle → a fresh terminal sized to it, in the seed's directory
+            // a fresh terminal sized to the drawn rect. Body (if any) is the cwd — set when the
+            // picker launches a project; empty (a plain draw) falls back to the seed's directory.
             let cols = query_param(query, "cols").and_then(|s| s.parse().ok()).unwrap_or(80);
             let rows = query_param(query, "rows").and_then(|s| s.parse().ok()).unwrap_or(24);
-            let cwd = window_cwd(seed_id).unwrap_or_default();
+            let mut buf = vec![0u8; content_length];
+            if content_length > 0 {
+                reader.read_exact(&mut buf)?;
+            }
+            let cwd = String::from_utf8_lossy(&buf).trim().to_string();
+            let cwd = if cwd.is_empty() { window_cwd(seed_id).unwrap_or_default() } else { cwd };
             let body = match spawn_window(cols, rows, &cwd) {
                 Some(id) => json!({"w": id, "name": window_name(&id.to_string())}).to_string(),
                 None => "{\"w\":null}".to_string(),
             };
             respond(&mut stream, "200 OK", "application/json", body.as_bytes())?;
+        }
+        ("GET", "/projects") => {
+            respond(&mut stream, "200 OK", "application/json", projects_json().as_bytes())?;
         }
         ("POST", "/resize") => {
             // a card was resized → match its window's grid (owned windows only; never the user's seed)
@@ -412,6 +421,37 @@ fn handle(mut stream: TcpStream, seed: &str) -> Result<()> {
         _ => write!(stream, "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n")?,
     }
     Ok(())
+}
+
+/// The picker's data: the user's open tabs (to mirror) + recent project dirs (to spawn a shell in),
+/// reusing matou's own sources. Windows the canvas spawned are filtered out — you don't re-pick your
+/// own cards.
+fn projects_json() -> String {
+    let (tabs, open_cwds) = crate::kitty::open_tabs().unwrap_or_default();
+    let open: Vec<serde_json::Value> = tabs
+        .iter()
+        .filter(|t| !is_owned(t.win_id))
+        .map(|t| json!({"win": t.win_id, "name": tab_label(t), "cwd": t.cwd, "status": t.status}))
+        .collect();
+    let projects: Vec<serde_json::Value> = crate::sources::project_dirs(&open_cwds)
+        .into_iter()
+        .map(|d| {
+            let name = d.rsplit('/').next().unwrap_or(&d).to_string();
+            json!({"dir": d, "name": name})
+        })
+        .collect();
+    json!({"open": open, "projects": projects}).to_string()
+}
+
+/// A readable label for an open tab — its title, else the running command, else the cwd basename.
+fn tab_label(t: &crate::kitty::OpenTab) -> String {
+    if !t.title.is_empty() {
+        t.title.clone()
+    } else if !t.proc.is_empty() {
+        t.proc.clone()
+    } else {
+        t.cwd.rsplit('/').next().unwrap_or("term").to_string()
+    }
 }
 
 /// First `key=value` for `key` in a `&`-joined query string.
@@ -848,19 +888,43 @@ fn page(seed: &str) -> String {
 // chip, close to dismiss. Each card is a real kitty window — xterm.js fed by SSE, input POSTed back;
 // a /heartbeat stream keeps the daemon alive while the page is open, even with zero cards.
 const PAGE: &str = r##"<!doctype html>
-<html><head><meta charset=utf-8><title>kittyweb</title>
+<html><head><meta charset=utf-8><title>matouweb</title>
 <link rel=stylesheet href=/xterm.css>
 <style>
  :root{--mantle:#181825;--s0:#313244;--ov0:#6c7086;--ov1:#7f849c;--text:#cdd6f4;--sub:#a6adc8;
    --blue:#8aadf4;--red:#f38ba8;--green:#a6e3a1}
  html,body{margin:0;height:100%;overflow:hidden;font-family:ui-sans-serif,system-ui,sans-serif;color:var(--text)}
- .canvas{position:fixed;inset:0;background:#11111b;cursor:crosshair;
-   background-image:radial-gradient(#262638 1.1px,transparent 1.1px);background-size:23px 23px;background-position:-1px -1px}
+ .canvas{position:fixed;top:0;left:0;bottom:0;right:300px;background:#11111b;cursor:crosshair;
+   background-image:radial-gradient(#262638 1.1px,transparent 1.1px);background-size:23px 23px;background-position:-1px -1px;
+   transition:right .18s ease}
+ body.noside .canvas{right:0}
+ /* steady picker on the right: open windows to mirror, projects to spawn */
+ #side{position:fixed;top:0;right:0;bottom:0;width:300px;z-index:800;display:flex;flex-direction:column;
+   background:#181825;border-left:1px solid #2a2a40;transition:transform .18s ease}
+ body.noside #side{transform:translateX(100%)}
+ #side h3{margin:0;padding:13px 14px 9px;font:600 12px/1 ui-sans-serif,sans-serif;letter-spacing:.03em;color:var(--sub)}
+ #q{margin:0 12px 8px;padding:7px 10px;border:1px solid #2c2c44;border-radius:8px;background:#11111b;
+   color:var(--text);font:12px ui-monospace,monospace;outline:none}
+ #q:focus{border-color:var(--blue)}
+ #list{flex:1;overflow-y:auto;padding:2px 8px 14px}
+ .sec{font:600 10px/1 ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--ov0);padding:11px 8px 5px}
+ .row{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:7px;cursor:pointer}
+ .row:hover{background:#252539}
+ .row .rs{width:7px;height:7px;border-radius:50%;flex:none}
+ .st-focused{background:var(--blue)} .st-running{background:var(--green)} .st-idle{background:var(--ov0)}
+ .st-failed{background:var(--red)} .st-proj{background:#cba6f7}
+ .row .rn{font:12px ui-monospace,monospace;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+ .row .rd{font:10px ui-monospace,monospace;color:var(--ov0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:42%}
+ #toggle{position:fixed;top:50%;right:300px;transform:translateY(-50%);z-index:801;width:16px;height:46px;
+   border:1px solid #2a2a40;border-right:0;border-radius:8px 0 0 8px;background:#181825;color:var(--ov1);
+   cursor:pointer;font:11px ui-sans-serif,sans-serif;transition:right .18s ease}
+ #toggle:hover{color:var(--text)}
+ body.noside #toggle{right:0}
  .hud{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:1000;pointer-events:none}
  .hud .pill{background:#181825e6;border:1px solid #2a2a40;border-radius:999px;padding:7px 14px;
    font:12.5px ui-monospace,monospace;color:var(--sub)}
  .hud .pill b{color:var(--blue)}
- #bar{position:fixed;right:12px;bottom:10px;z-index:1000;font:11px ui-monospace,monospace;
+ #bar{position:fixed;left:12px;bottom:10px;z-index:1000;font:11px ui-monospace,monospace;
    color:var(--ov0);background:#181825aa;padding:3px 8px;border-radius:6px;pointer-events:none}
  .rubber{position:absolute;z-index:900;border:1.5px dashed var(--blue);background:#8aadf41a;
    border-radius:8px;pointer-events:none}
@@ -896,8 +960,14 @@ const PAGE: &str = r##"<!doctype html>
 </style></head>
 <body>
 <div class="canvas" id="canvas"></div>
-<div class="hud"><div class="pill"><b>drag</b> empty space → new terminal · titlebar to move · corner to resize</div></div>
-<div id=bar>kittyweb</div>
+<div class="hud"><div class="pill"><b>drag</b> empty space → new terminal · or pick one from the right</div></div>
+<aside id=side>
+  <h3>add to canvas</h3>
+  <input id=q placeholder="filter…" autocomplete=off spellcheck=false>
+  <div id=list></div>
+</aside>
+<button id=toggle title="hide / show picker">▸</button>
+<div id=bar>matouweb</div>
 <script src=/xterm.js></script>
 <script>
 const THEME=__THEME__,FONT="__FONT__",SEED="__SEED__",SEED_OWNED=__SEED_OWNED__;
@@ -910,11 +980,11 @@ function endSession(){
   if(ended)return;ended=true;
   try{hb&&hb.close()}catch(_){}
   window.close();
-  setTimeout(()=>{document.title='kittyweb — ended';
+  setTimeout(()=>{document.title='matouweb — ended';
     document.body.innerHTML='<div style="position:fixed;inset:0;display:flex;align-items:center;'+
       'justify-content:center;color:#888;font:14px ui-monospace,monospace">session ended — you can close this tab</div>';},120);
 }
-function updateBar(){if(!ended)bar.textContent='kittyweb · '+cards.size+' terminal'+(cards.size===1?'':'s');}
+function updateBar(){if(!ended)bar.textContent='matouweb · '+cards.size+' terminal'+(cards.size===1?'':'s');}
 function gridOf(w,h){return{cols:Math.max(8,Math.round(w/CW)),rows:Math.max(3,Math.round(h/CH))};}
 
 // scale a card's terminal grid to fill its body box (≈1 since the window is resized to match)
@@ -1029,10 +1099,43 @@ window.addEventListener('mouseup',e=>{
     rubber.remove();rubber=null;draw=null;
     if(w>60&&h>50){const W=Math.max(200,w),H=Math.max(110,h),g=gridOf(W,H-28);
       fetch('/spawn?cols='+g.cols+'&rows='+g.rows,{method:'POST'}).then(r=>r.json()).then(o=>{
-        if(o&&o.w)makeCard(o.w,x,y,W,H,o.name,true);else bar.textContent='kittyweb · spawn failed';
-      }).catch(()=>{bar.textContent='kittyweb · spawn failed';});}
+        if(o&&o.w)makeCard(o.w,x,y,W,H,o.name,true);else bar.textContent='matouweb · spawn failed';
+      }).catch(()=>{bar.textContent='matouweb · spawn failed';});}
   }
 });
+
+// ── the steady picker on the right ──
+const side=document.getElementById('side'),listEl=document.getElementById('list'),
+  q=document.getElementById('q'),toggle=document.getElementById('toggle');
+let PROJ={open:[],projects:[]};
+toggle.onclick=()=>{const off=document.body.classList.toggle('noside');toggle.textContent=off?'◂':'▸';};
+function esc(s){return(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function base(p){return(p||'').split('/').filter(Boolean).pop()||'';}
+let casc=0;
+function nextPos(){const x=44+(casc%6)*32,y=72+(casc%6)*30;casc++;return{x,y};}
+function renderList(){
+  const f=q.value.toLowerCase(),m=s=>(s||'').toLowerCase().includes(f);
+  const open=PROJ.open.filter(o=>m(o.name)||m(o.cwd)),pr=PROJ.projects.filter(p=>m(p.name)||m(p.dir));
+  let h='';
+  if(open.length){h+='<div class=sec>open windows</div>';
+    open.forEach((o,i)=>h+='<div class=row data-k=o data-i='+i+'><span class="rs st-'+(o.status||'idle')+
+      '"></span><span class=rn>'+esc(o.name)+'</span><span class=rd>'+esc(base(o.cwd))+'</span></div>');}
+  if(pr.length){h+='<div class=sec>projects</div>';
+    pr.forEach((p,i)=>h+='<div class=row data-k=p data-i='+i+'><span class="rs st-proj"></span><span class=rn>'+
+      esc(p.name)+'</span><span class=rd>'+esc(p.dir)+'</span></div>');}
+  listEl.innerHTML=h||'<div class=sec>nothing matches</div>';
+  listEl.querySelectorAll('.row').forEach(r=>{const i=+r.dataset.i;
+    r.onclick=()=> r.dataset.k==='o'?addOpen(open[i]):addProject(pr[i]);});
+}
+function addOpen(o){const p=nextPos();makeCard(String(o.win),p.x,p.y,520,320,o.name,false);} // mirror existing window
+function addProject(pj){const W=560,H=340,g=gridOf(W,H-28),p=nextPos();
+  fetch('/spawn?cols='+g.cols+'&rows='+g.rows,{method:'POST',body:pj.dir}).then(r=>r.json()).then(o=>{
+    if(o&&o.w)makeCard(o.w,p.x,p.y,W,H,o.name,true);else bar.textContent='matouweb · spawn failed';
+  }).catch(()=>{bar.textContent='matouweb · spawn failed';});}
+function loadProjects(){fetch('/projects').then(r=>r.json()).then(d=>{PROJ=d;renderList();}).catch(()=>{});}
+q.addEventListener('input',renderList);
+q.addEventListener('focus',loadProjects); // refresh the open-windows list when you go to pick
+loadProjects();
 
 // heartbeat keeps the daemon alive while this page is open (independent of how many cards exist)
 hb=new EventSource('/heartbeat');hb.addEventListener('end',endSession);
