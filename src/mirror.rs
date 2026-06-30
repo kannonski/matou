@@ -798,14 +798,21 @@ const PAGE: &str = r##"<!doctype html>
  .pane.act{box-shadow:inset 0 0 0 1px #8aadf4}
  .pane .term{transform-origin:center center}
  .xterm,.xterm-viewport{background:__BG__ !important}
- .add,.cls{position:absolute;z-index:5;opacity:0;transition:opacity .1s;cursor:pointer;border:0;
-   color:#cdd6f4;background:#1e1e2ecc;font:14px monospace;line-height:1;
-   display:flex;align-items:center;justify-content:center}
- .pane:hover .add,.pane:hover .cls{opacity:.55}
- .add:hover,.cls:hover{opacity:1 !important;background:#8aadf4dd;color:#11111b}
- .addR{top:0;bottom:0;right:0;width:15px}
- .addD{left:0;right:0;bottom:0;height:15px}
- .cls{top:0;right:15px;width:18px;height:15px;border-radius:0 0 0 4px}
+ .bar{position:absolute;z-index:6;top:8px;left:50%;transform:translate(-50%,-8px);
+   display:flex;gap:3px;padding:4px;background:#181825ee;border:1px solid #2c2c44;
+   border-radius:11px;box-shadow:0 6px 18px -6px #000c;
+   opacity:0;pointer-events:none;transition:opacity .14s ease,transform .14s ease}
+ .pane:hover .bar{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+ .bar button{display:flex;align-items:center;justify-content:center;width:28px;height:26px;
+   border:0;border-radius:7px;background:transparent;color:#a6adc8;cursor:pointer;
+   transition:background .12s,color .12s}
+ .bar button:hover{background:#8aadf4;color:#11111b}
+ .bar button.x:hover{background:#f38ba8;color:#11111b}
+ .bar .sep{width:1px;background:#2c2c44;margin:3px 1px}
+ .ic{position:relative;width:13px;height:11px;border:1.6px solid currentColor;border-radius:2.5px}
+ .ic::after{content:"";position:absolute;background:currentColor}
+ .ic.v::after{top:-1.6px;bottom:-1.6px;left:50%;width:1.6px;transform:translateX(-50%)}
+ .ic.h::after{left:-1.6px;right:-1.6px;top:50%;height:1.6px;transform:translateY(-50%)}
  #bar{position:fixed;bottom:0;right:0;font:11px monospace;color:#999;background:#000a;
    padding:3px 7px;z-index:10}
 </style></head>
@@ -846,8 +853,24 @@ function refit(leaf){
 }
 function refitAll(){setTimeout(()=>leaves.forEach(refit),60);setTimeout(()=>leaves.forEach(refit),300);}
 
-function btn(cls,txt,fn){const b=document.createElement('button');b.className=cls;b.textContent=txt;
-  b.onclick=e=>{e.stopPropagation();fn();};return b;}
+// a toolbar button: a split icon (v|h) or the × close, wired to fn
+function tbtn(title,fn,icon,cls){
+  const b=document.createElement('button');b.title=title;if(cls)b.className=cls;
+  if(icon==='x'){b.textContent='×';}
+  else{const s=document.createElement('span');s.className='ic '+icon;b.appendChild(s);}
+  b.onclick=e=>{e.stopPropagation();fn();};return b;
+}
+function toolbar(leaf){
+  const bar=document.createElement('div');bar.className='bar';
+  const sep=document.createElement('span');sep.className='sep';
+  bar.append(
+    tbtn('split right',()=>split(leaf,'right'),'v'),
+    tbtn('split down',()=>split(leaf,'down'),'h'),
+    sep,
+    tbtn('close pane',()=>closeLeaf(leaf),'x','x'),
+  );
+  return bar;
+}
 
 function setActive(leaf){if(active)active.el.classList.remove('act');
   active=leaf;if(leaf){leaf.el.classList.add('act');leaf.term.focus();}}
@@ -856,9 +879,7 @@ function makeLeaf(win){
   const el=document.createElement('div');el.className='pane';
   const host=document.createElement('div');host.className='term';el.appendChild(host);
   const leaf={kind:'leaf',win,el,host,term:null,es:null,parent:null};
-  el.append(btn('add addR','+',()=>split(leaf,'right')),
-            btn('add addD','+',()=>split(leaf,'down')),
-            btn('cls','×',()=>closeLeaf(leaf)));
+  el.appendChild(toolbar(leaf));
   const term=new Terminal({fontFamily:FONT,fontSize:13,cursorBlink:false,scrollback:0,theme:THEME});
   term.open(host);leaf.term=term;
   el.addEventListener('mousedown',()=>setActive(leaf));
